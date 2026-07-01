@@ -27,9 +27,7 @@ struct RuntimeConfig {
     immich_url: String,
     api_key: String,
     video_crf: u32,
-    video_preset: u8,
     image_distance: f32,
-    render_device: Option<String>,
     concurrency: usize,
     dry_run: bool,
 }
@@ -76,67 +74,51 @@ enum Command {
         #[arg(long)]
         image_only: bool,
 
-        /// AV1 CRF (0-63, lower = better).
-        #[arg(long, default_value_t = 20)]
-        video_crf: u32,
+            /// AV1 CRF (0-63, lower = better).
+            #[arg(long, default_value_t = 20)]
+            video_crf: u32,
 
-        /// SVT-AV1 preset (0-13, lower = slower/better).
-        #[arg(long, default_value_t = 6)]
-        video_preset: u8,
+            /// JXL butteraugli distance (0 = lossless, 1.0 = visually lossless).
+            #[arg(long, default_value_t = 1.0)]
+            image_distance: f32,
 
-        /// JXL butteraugli distance (0 = lossless, 1.0 = visually lossless).
-        #[arg(long, default_value_t = 1.0)]
-        image_distance: f32,
+            /// Dry run (discover only, no transcode/upload).
+            #[arg(long, default_value_t = true)]
+            dry_run: bool,
 
-        /// VAAPI render device path (e.g. /dev/dri/renderD128).
-        #[arg(long)]
-        render_device: Option<String>,
+            /// Concurrency level.
+            #[arg(long, default_value_t = 2)]
+            concurrency: usize,
+        },
 
-        /// Dry run (discover only, no transcode/upload).
-        #[arg(long, default_value_t = true)]
-        dry_run: bool,
+        /// Daemon mode: poll for new assets and process them.
+        Watch {
+            /// Immich server URL.
+            #[arg(short, long, env = "IMMICH_URL")]
+            immich_url: String,
 
-        /// Concurrency level.
-        #[arg(long, default_value_t = 2)]
-        concurrency: usize,
-    },
+            /// Immich API key.
+            #[arg(short, long, env = "IMMICH_API_KEY")]
+            api_key: String,
 
-    /// Daemon mode: poll for new assets and process them.
-    Watch {
-        /// Immich server URL.
-        #[arg(short, long, env = "IMMICH_URL")]
-        immich_url: String,
+            /// AV1 CRF (0-63, lower = better).
+            #[arg(long, default_value_t = 20)]
+            video_crf: u32,
 
-        /// Immich API key.
-        #[arg(short, long, env = "IMMICH_API_KEY")]
-        api_key: String,
+            /// JXL butteraugli distance.
+            #[arg(long, default_value_t = 1.0)]
+            image_distance: f32,
 
-        /// AV1 CRF (0-63, lower = better).
-        #[arg(long, default_value_t = 20)]
-        video_crf: u32,
-
-        /// SVT-AV1 preset (0-13, lower = slower/better).
-        #[arg(long, default_value_t = 6)]
-        video_preset: u8,
-
-        /// JXL butteraugli distance.
-        #[arg(long, default_value_t = 1.0)]
-        image_distance: f32,
-
-        /// VAAPI render device path.
-        #[arg(long)]
-        render_device: Option<String>,
-
-        /// Poll interval.
-        #[arg(short, long, default_value = "5min")]
-        interval: String,
+            /// Poll interval.
+            #[arg(short, long, default_value = "5min")]
+            interval: String,
 
         /// Dry run (discover only, no transcode/upload).
         #[arg(long, default_value_t = true)]
         dry_run: bool,
     },
 
-    /// Serve HTTP webhook endpoint for Immich server-side events.
+        /// Serve HTTP webhook endpoint for Immich server-side events.
     Serve {
         /// Bind address.
         #[arg(long, default_value = "0.0.0.0:8088")]
@@ -154,17 +136,9 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         video_crf: u32,
 
-        /// SVT-AV1 preset.
-        #[arg(long, default_value_t = 6)]
-        video_preset: u8,
-
         /// JXL distance.
         #[arg(long, default_value_t = 1.0)]
         image_distance: f32,
-
-        /// VAAPI device.
-        #[arg(long)]
-        render_device: Option<String>,
     },
 }
 
@@ -185,9 +159,7 @@ async fn main() -> anyhow::Result<()> {
             video_only,
             image_only,
             video_crf,
-            video_preset,
             image_distance,
-            render_device,
             dry_run,
             concurrency,
         } => {
@@ -195,9 +167,7 @@ async fn main() -> anyhow::Result<()> {
                 immich_url,
                 api_key,
                 video_crf,
-                video_preset,
                 image_distance,
-                render_device,
                 concurrency,
                 dry_run,
             };
@@ -230,9 +200,7 @@ async fn main() -> anyhow::Result<()> {
             immich_url,
             api_key,
             video_crf,
-            video_preset,
             image_distance,
-            render_device,
             interval,
             dry_run,
         } => {
@@ -240,9 +208,7 @@ async fn main() -> anyhow::Result<()> {
                 immich_url,
                 api_key,
                 video_crf,
-                video_preset,
                 image_distance,
-                render_device,
                 concurrency: 1,
                 dry_run,
             };
@@ -274,17 +240,13 @@ async fn main() -> anyhow::Result<()> {
             immich_url,
             api_key,
             video_crf,
-            video_preset,
             image_distance,
-            render_device,
         } => {
             let cfg = Arc::new(RuntimeConfig {
                 immich_url,
                 api_key,
                 video_crf,
-                video_preset,
                 image_distance,
-                render_device,
                 concurrency: 2,
                 dry_run: false,
             });
