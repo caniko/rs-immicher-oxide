@@ -56,6 +56,7 @@
           ffmpeg
           libvmaf
           svt-av1
+          openssl
         ];
 
         commonArgs = {
@@ -93,6 +94,7 @@
         devShells = rs-harbor.lib.mkDevShells {
           inherit pkgs cross cargoConfig;
           inherit (toolchain) craneLib;
+          pkgConfigDeps = buildInputs;
           packages = nativeBuildInputs ++ buildInputs;
         };
       }
