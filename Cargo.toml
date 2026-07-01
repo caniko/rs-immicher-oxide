@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "codec-jxl",
+    "codec-av1",
+    "backend-immich",
+    "cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"

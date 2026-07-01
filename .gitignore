@@ -1,0 +1,7 @@
+target
+result
+*.swp
+*.swo
+.envrc
+.direnv
+.DS_Store

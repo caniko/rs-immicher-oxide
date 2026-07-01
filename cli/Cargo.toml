@@ -1,0 +1,23 @@
+[package]
+name = "rs-immicher-oxide"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rs-immicher-oxide"
+path = "src/main.rs"
+
+[dependencies]
+rs-immicher-oxide-core = { path = "../core" }
+rs-immicher-oxide-codec-jxl = { path = "../codec-jxl" }
+rs-immicher-oxide-codec-av1 = { path = "../codec-av1" }
+rs-immicher-oxide-backend-immich = { path = "../backend-immich" }
+
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"

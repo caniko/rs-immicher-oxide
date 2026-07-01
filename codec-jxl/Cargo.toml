@@ -1,0 +1,20 @@
+[package]
+name = "rs-immicher-oxide-codec-jxl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rs-immicher-oxide-core = { path = "../core" }
+async-trait = "0.1"
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "webp",
+    "tiff",
+    "gif",
+    "bmp",
+    "avif",
+] }
+jxl-encoder = "0.3"
+tracing = "0.1"

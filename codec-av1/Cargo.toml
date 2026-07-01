@@ -1,0 +1,12 @@
+[package]
+name = "rs-immicher-oxide-codec-av1"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rs-immicher-oxide-core = { path = "../core" }
+async-trait = "0.1"
+avio = { version = "0.15", features = ["pipeline"] }
+tracing = "0.1"
+tempfile = "3"
