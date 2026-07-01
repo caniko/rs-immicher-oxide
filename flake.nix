@@ -29,6 +29,9 @@
         toolchain = rs-harbor.lib.mkToolchain {
           inherit pkgs;
           channel = "stable";
+          extensions = [ "rust-src" "rustfmt" "clippy" "llvm-tools-preview" ];
+          withRustAnalyzer = false;
+          crossTargets = [ "x86_64-unknown-linux-gnu" ];
         };
         inherit (toolchain) craneLib;
         cross = rs-harbor.lib.mkCross {
