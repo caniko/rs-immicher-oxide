@@ -39,6 +39,10 @@
         };
         cargoConfig = rs-harbor.lib.mkCargoConfig {
           inherit pkgs;
+          channel = "stable";
+          enableCranelift = false;
+          enableShareGenerics = false;
+          enableParallelFrontend = false;
         };
 
         src = craneLib.cleanCargoSource ./.;
