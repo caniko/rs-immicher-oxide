@@ -50,10 +50,7 @@ impl RuntimeConfig {
     fn build_video_pipeline(&self) -> (ImmichSource, SvtAv1UhqTranscoder, ImmichSink) {
         let immich = self.to_immich_config();
         let source = ImmichSource::new(immich.clone(), MediaCodec::Av1).with_videos_only();
-        let mut transcoder = SvtAv1UhqTranscoder::new(self.video_crf, self.video_preset);
-        if let Some(ref dev) = self.render_device {
-            transcoder = transcoder.with_render_device(dev.clone());
-        }
+        let transcoder = SvtAv1UhqTranscoder::new(self.video_crf);
         let sink = ImmichSink::new(immich);
         (source, transcoder, sink)
     }
