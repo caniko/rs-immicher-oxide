@@ -2,10 +2,18 @@
 name = "rs-immicher-oxide-codec-jxl"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "JPEG XL image transcoder for rs-immicher-oxide media pipelines."
+documentation = "https://docs.rs/rs-immicher-oxide-codec-jxl"
+readme = "README.md"
+keywords = ["immich", "jxl", "jpeg-xl", "transcode"]
+categories = ["multimedia::images"]
+include = ["Cargo.toml", "README.md", "src/**"]
 
 [dependencies]
-rs-immicher-oxide-core = { path = "../core" }
+rs-immicher-oxide-core = { version = "0.1.0", path = "../core" }
 async-trait = "0.1"
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
@@ -22,3 +30,7 @@ tracing = "0.1"
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 serde_json = "1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

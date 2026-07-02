@@ -1,17 +1,16 @@
 [workspace]
 resolver = "2"
-members = [
-    "core",
-    "codec-jxl",
-    "codec-av1",
-    "backend-immich",
-    "cli",
-]
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.93"
 license = "AGPL-3.0-only"
+repository = "https://codeberg.org/caniko/rs-immicher-oxide"
+
+[workspace.metadata.crane]
+name = "rs-immicher-oxide"
 
 [patch.crates-io]
 ff-pipeline = { path = "vendor/ff-pipeline" }

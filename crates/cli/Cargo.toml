@@ -2,17 +2,25 @@
 name = "rs-immicher-oxide"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Command-line Immich media transcoding pipeline for AV1 video and JPEG XL images."
+documentation = "https://docs.rs/rs-immicher-oxide"
+readme = "README.md"
+keywords = ["immich", "av1", "jxl", "transcode"]
+categories = ["command-line-utilities", "multimedia::images", "multimedia::video"]
+include = ["Cargo.toml", "README.md", "src/**"]
 
 [[bin]]
 name = "rs-immicher-oxide"
 path = "src/main.rs"
 
 [dependencies]
-rs-immicher-oxide-core = { path = "../core" }
-rs-immicher-oxide-codec-jxl = { path = "../codec-jxl" }
-rs-immicher-oxide-codec-av1 = { path = "../codec-av1" }
-rs-immicher-oxide-backend-immich = { path = "../backend-immich" }
+rs-immicher-oxide-core = { version = "0.1.0", path = "../core" }
+rs-immicher-oxide-codec-jxl = { version = "0.1.0", path = "../codec-jxl" }
+rs-immicher-oxide-codec-av1 = { version = "0.1.0", path = "../codec-av1" }
+rs-immicher-oxide-backend-immich = { version = "0.1.0", path = "../backend-immich" }
 
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }

@@ -2,10 +2,18 @@
 name = "rs-immicher-oxide-backend-immich"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Immich source and sink backend for rs-immicher-oxide media pipelines."
+documentation = "https://docs.rs/rs-immicher-oxide-backend-immich"
+readme = "README.md"
+keywords = ["immich", "media", "api", "transcode"]
+categories = ["api-bindings", "multimedia::images", "multimedia::video"]
+include = ["Cargo.toml", "README.md", "src/**", "tests/**"]
 
 [dependencies]
-rs-immicher-oxide-core = { path = "../core" }
+rs-immicher-oxide-core = { version = "0.1.0", path = "../core" }
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["stream", "multipart", "json"] }
 serde = { version = "1", features = ["derive"] }
@@ -16,7 +24,13 @@ tokio = { version = "1", features = ["fs"] }
 futures = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
+bytes = "1"
+tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
 wiremock = "0.6"
 tokio = { version = "1", features = ["full"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

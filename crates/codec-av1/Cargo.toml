@@ -2,11 +2,23 @@
 name = "rs-immicher-oxide-codec-av1"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "AV1 video transcoder for rs-immicher-oxide media pipelines."
+documentation = "https://docs.rs/rs-immicher-oxide-codec-av1"
+readme = "README.md"
+keywords = ["immich", "av1", "video", "transcode"]
+categories = ["multimedia::video"]
+include = ["Cargo.toml", "README.md", "src/**"]
 
 [dependencies]
-rs-immicher-oxide-core = { path = "../core" }
+rs-immicher-oxide-core = { version = "0.1.0", path = "../core" }
 async-trait = "0.1"
 avio = { version = "0.15", features = ["pipeline"] }
 tracing = "0.1"
 tempfile = "3"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

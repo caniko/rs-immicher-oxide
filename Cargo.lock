@@ -2088,6 +2088,7 @@ name = "rs-immicher-oxide-backend-immich"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
  "futures",
  "reqwest",
@@ -2096,6 +2097,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
  "wiremock",

@@ -2,7 +2,15 @@
 name = "rs-immicher-oxide-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Core media pipeline traits, types, state, and orchestration for rs-immicher-oxide."
+documentation = "https://docs.rs/rs-immicher-oxide-core"
+readme = "README.md"
+keywords = ["immich", "media", "pipeline", "transcode"]
+categories = ["multimedia::images", "multimedia::video"]
+include = ["Cargo.toml", "README.md", "src/**"]
 
 [dependencies]
 async-trait = "0.1"
@@ -12,5 +20,4 @@ serde_json = "1"
 thiserror = "2"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
-
+tokio = { version = "1", features = ["rt", "macros", "time"] }
