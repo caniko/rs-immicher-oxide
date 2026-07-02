@@ -94,7 +94,7 @@ enum Command {
         /// Daemon mode: poll for new assets and process them.
         Watch {
             /// Immich server URL.
-            #[arg(short, long, env = "IMMICH_URL")]
+            #[arg(long, env = "IMMICH_URL")]
             immich_url: String,
 
             /// Immich API key.
