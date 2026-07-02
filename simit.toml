@@ -1,0 +1,5 @@
+[ci]
+runtime = "nix"
+runner = "atlas-nix-trusted"
+workspace = true
+with_docs = true
