@@ -46,6 +46,9 @@
         };
 
         src = craneLib.cleanCargoSource ./.;
+        cargoVendorDir = craneLib.vendorCargoDeps {
+          inherit src;
+        };
 
         nativeBuildInputs = with pkgs; [
           pkg-config
@@ -60,17 +63,15 @@
         ];
 
         commonArgs = {
-          inherit src;
+          inherit src cargoVendorDir;
           strictDeps = true;
           inherit nativeBuildInputs buildInputs;
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
         };
-
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
         package = craneLib.buildPackage (
           commonArgs
           // {
-            inherit cargoArtifacts;
             pname = "rs-immicher-oxide";
           }
         );
@@ -79,11 +80,12 @@
         packages.default = package;
 
         checks = {
-          clippy = craneLib.cargoClippy (
+          clippy = craneLib.mkCargoDerivation (
             commonArgs
             // {
-              inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+              cargoArtifacts = null;
+              pnameSuffix = "-clippy";
+              buildPhaseCargoCommand = "cargoWithProfile clippy --locked --all-targets -- --deny warnings";
             }
           );
           fmt = craneLib.cargoFmt {
