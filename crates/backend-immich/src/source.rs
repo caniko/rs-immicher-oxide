@@ -7,7 +7,7 @@ use rs_immicher_oxide_core::error::{PipelineError, Result};
 use rs_immicher_oxide_core::source::Source;
 use rs_immicher_oxide_core::types::{Asset, MediaCodec, MediaKind};
 
-use crate::client::{AssetType, ImmichApiClient};
+use crate::client::{AssetType, ImmichApiClient, MetadataSearchDto};
 use crate::ImmichConfig;
 
 /// Source that discovers and streams existing Immich library assets via the REST API.
@@ -104,26 +104,72 @@ impl Source for ImmichSource {
     }
 
     async fn discover(&self) -> Result<BoxStream<'_, Result<Asset>>> {
-        // Fetch all assets with pagination
-        let dtos = self
-            .client
-            .search_all_assets(self.asset_type_filter.clone(), self.taken_after.clone())
-            .await
-            .map_err(|e| PipelineError::Source(Box::new(e)))?;
+        let state = DiscoveryState {
+            page: 1,
+            page_size: 500,
+            pending: Vec::new().into_iter(),
+            done: false,
+            seen: 0,
+            total: None,
+        };
 
-        let target_codec = self.target_codec;
+        Ok(futures::stream::unfold(state, move |mut state| async move {
+            loop {
+                if let Some(asset) = state.pending.next() {
+                    return Some((Ok(asset), state));
+                }
 
-        // Convert to stream, filtering out assets already in the target codec
-        let assets: Vec<_> = dtos
-            .into_iter()
-            .map(|dto| self.map_asset(dto.clone()))
-            .filter(|a| a.codec != target_codec && target_codec != MediaCodec::Unknown)
-            .map(Ok)
-            .collect();
+                if state.done {
+                    return None;
+                }
 
-        let stream = futures::stream::iter(assets);
+                let dto = MetadataSearchDto {
+                    page: state.page,
+                    size: state.page_size,
+                    asset_type: self.asset_type_filter.clone(),
+                    taken_after: self.taken_after.clone(),
+                    taken_before: None,
+                    created_after: None,
+                    with_deleted: Some(false),
+                };
 
-        Ok(stream.boxed())
+                let result = match self.client.search_assets(&dto).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        state.done = true;
+                        return Some((Err(PipelineError::Source(Box::new(e))), state));
+                    }
+                };
+
+                state.seen += result.assets.items.len();
+                state.total = result.assets.total;
+                state.pending = result
+                    .assets
+                    .items
+                    .into_iter()
+                    .map(|dto| self.map_asset(dto))
+                    .filter(|a| {
+                        a.codec != self.target_codec && self.target_codec != MediaCodec::Unknown
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                match result.assets.next_page {
+                    Some(ref token) if !token.is_empty() => {
+                        state.page = token.parse().unwrap_or(state.page + 1);
+                    }
+                    _ => state.done = true,
+                }
+
+                if state
+                    .total
+                    .is_some_and(|total| state.seen >= total as usize)
+                {
+                    state.done = true;
+                }
+            }
+        })
+        .boxed())
     }
 
     async fn open_original(&self, asset: &Asset) -> Result<Box<dyn Read + Send + Unpin + 'static>> {
@@ -136,9 +182,17 @@ impl Source for ImmichSource {
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| PipelineError::Source(Box::new(e)))?
-            .to_vec();
+            .map_err(|e| PipelineError::Source(Box::new(e)))?;
 
         Ok(Box::new(std::io::Cursor::new(bytes)))
     }
+}
+
+struct DiscoveryState {
+    page: i32,
+    page_size: i32,
+    pending: std::vec::IntoIter<Asset>,
+    done: bool,
+    seen: usize,
+    total: Option<i32>,
 }
