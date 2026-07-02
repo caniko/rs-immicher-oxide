@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use futures::StreamExt;
+use std::sync::Arc;
 
 use crate::error::Result;
 use crate::sink::Sink;
 use crate::source::Source;
 use crate::transcoder::Transcoder;
-use crate::types::AssetOutcome;
+use crate::types::{Asset, AssetOutcome};
 
 /// State persistence for resumable pipeline runs.
 #[async_trait]
@@ -25,11 +26,12 @@ pub trait StateStore: Send + Sync {
 /// Wires a `Source`, `Transcoder`, and `Sink` together with optional
 /// state tracking for resumability.
 pub struct Pipeline {
-    source: Box<dyn Source>,
-    transcoder: Box<dyn Transcoder>,
-    sink: Box<dyn Sink>,
-    state: Option<Box<dyn StateStore>>,
+    source: Arc<dyn Source>,
+    transcoder: Arc<dyn Transcoder>,
+    sink: Arc<dyn Sink>,
+    state: Option<Arc<dyn StateStore>>,
     dry_run: bool,
+    concurrency: usize,
 }
 
 impl Pipeline {
@@ -40,17 +42,18 @@ impl Pipeline {
         sink: Box<dyn Sink>,
     ) -> Self {
         Self {
-            source,
-            transcoder,
-            sink,
+            source: source.into(),
+            transcoder: transcoder.into(),
+            sink: sink.into(),
             state: None,
             dry_run: false,
+            concurrency: 1,
         }
     }
 
     /// Attach a state store for resumability.
     pub fn with_state(mut self, state: Box<dyn StateStore>) -> Self {
-        self.state = Some(state);
+        self.state = Some(state.into());
         self
     }
 
@@ -60,116 +63,44 @@ impl Pipeline {
         self
     }
 
+    /// Set the number of assets to process concurrently.
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency.max(1);
+        self
+    }
+
     /// Run the pipeline: discover, transcode, store.
     pub async fn run(
         &mut self,
         mut on_outcome: impl FnMut(AssetOutcome),
     ) -> Result<PipelineSummary> {
         let mut summary = PipelineSummary::default();
-        let mut stream = self.source.discover().await?;
+        let stream = self.source.discover().await?;
+        let source = Arc::clone(&self.source);
+        let transcoder = Arc::clone(&self.transcoder);
+        let sink = Arc::clone(&self.sink);
+        let state = self.state.clone();
+        let dry_run = self.dry_run;
 
-        while let Some(asset_result) = stream.next().await {
-            let asset = asset_result?;
-
-            // Skip if already completed (stateful resume)
-            if let Some(ref state) = self.state {
-                if state.is_completed(&asset.id).await.unwrap_or(false) {
-                    summary.skipped += 1;
-                    continue;
+        let mut outcomes = stream
+            .map(|asset_result| {
+                let source = Arc::clone(&source);
+                let transcoder = Arc::clone(&transcoder);
+                let sink = Arc::clone(&sink);
+                let state = state.clone();
+                async move {
+                    let asset = asset_result?;
+                    Ok::<AssetOutcome, crate::error::PipelineError>(
+                        process_asset(source, transcoder, sink, state, dry_run, asset).await,
+                    )
                 }
-            }
+            })
+            .buffer_unordered(self.concurrency);
 
-            // Check if the transcoder can handle this asset
-            if !self.transcoder.can_handle(&asset) {
-                let outcome = AssetOutcome::Skipped {
-                    asset_id: asset.id.clone(),
-                    reason: format!(
-                        "codec {:?} not supported by {}",
-                        asset.codec,
-                        self.transcoder.label()
-                    ),
-                };
-                summary.skipped += 1;
-                on_outcome(outcome.clone());
-
-                if let Some(ref state) = self.state {
-                    let _ = state.record(&asset.id, &outcome).await;
-                }
-                continue;
-            }
-
-            if self.dry_run {
-                let outcome = AssetOutcome::Skipped {
-                    asset_id: asset.id.clone(),
-                    reason: "dry run".into(),
-                };
-                summary.skipped += 1;
-                on_outcome(outcome.clone());
-
-                if let Some(ref state) = self.state {
-                    let _ = state.record(&asset.id, &outcome).await;
-                }
-                continue;
-            }
-
-            // Open original bytes
-            let input = match self.source.open_original(&asset).await {
-                Ok(stream) => stream,
-                Err(e) => {
-                    let outcome = AssetOutcome::Failed {
-                        asset_id: asset.id.clone(),
-                        error: format!("failed to open original: {e}"),
-                    };
-                    summary.failed += 1;
-                    on_outcome(outcome.clone());
-
-                    if let Some(ref state) = self.state {
-                        let _ = state.record(&asset.id, &outcome).await;
-                    }
-                    continue;
-                }
-            };
-
-            // Transcode
-            let mut transcoded = match self.transcoder.transcode(input, &asset).await {
-                Ok(t) => t,
-                Err(e) => {
-                    let outcome = AssetOutcome::Failed {
-                        asset_id: asset.id.clone(),
-                        error: format!("transcode failed: {e}"),
-                    };
-                    summary.failed += 1;
-                    on_outcome(outcome.clone());
-
-                    if let Some(ref state) = self.state {
-                        let _ = state.record(&asset.id, &outcome).await;
-                    }
-                    continue;
-                }
-            };
-
-            // Store (via Sink::process which handles store + metadata + verify + delete)
-            let outcome = self
-                .sink
-                .process(&asset, &mut transcoded)
-                .await
-                .unwrap_or_else(|e| AssetOutcome::Failed {
-                    asset_id: asset.id.clone(),
-                    error: format!("sink processing failed: {e}"),
-                });
-
-            match &outcome {
-                AssetOutcome::Success { .. } => summary.succeeded += 1,
-                AssetOutcome::PartialSuccess { .. } => summary.partial += 1,
-                AssetOutcome::Skipped { .. } => summary.skipped += 1,
-                AssetOutcome::Failed { .. } => summary.failed += 1,
-            }
-
-            on_outcome(outcome.clone());
-
-            if let Some(ref state) = self.state {
-                let _ = state.record(&asset.id, &outcome).await;
-            }
+        while let Some(outcome) = outcomes.next().await {
+            let outcome = outcome?;
+            summary.record(&outcome);
+            on_outcome(outcome);
         }
 
         Ok(summary)
@@ -189,6 +120,91 @@ impl PipelineSummary {
     pub fn total(&self) -> u64 {
         self.succeeded + self.partial + self.skipped + self.failed
     }
+
+    fn record(&mut self, outcome: &AssetOutcome) {
+        match outcome {
+            AssetOutcome::Success { .. } => self.succeeded += 1,
+            AssetOutcome::PartialSuccess { .. } => self.partial += 1,
+            AssetOutcome::Skipped { .. } => self.skipped += 1,
+            AssetOutcome::Failed { .. } => self.failed += 1,
+        }
+    }
+}
+
+async fn process_asset(
+    source: Arc<dyn Source>,
+    transcoder: Arc<dyn Transcoder>,
+    sink: Arc<dyn Sink>,
+    state: Option<Arc<dyn StateStore>>,
+    dry_run: bool,
+    asset: Asset,
+) -> AssetOutcome {
+    if let Some(ref state) = state {
+        if state.is_completed(&asset.id).await.unwrap_or(false) {
+            return AssetOutcome::Skipped {
+                asset_id: asset.id,
+                reason: "already completed".into(),
+            };
+        }
+    }
+
+    let outcome = if !transcoder.can_handle(&asset) {
+        AssetOutcome::Skipped {
+            asset_id: asset.id.clone(),
+            reason: format!(
+                "codec {:?} not supported by {}",
+                asset.codec,
+                transcoder.label()
+            ),
+        }
+    } else if dry_run {
+        AssetOutcome::Skipped {
+            asset_id: asset.id.clone(),
+            reason: "dry run".into(),
+        }
+    } else {
+        process_opened_asset(&*source, &*transcoder, &*sink, &asset).await
+    };
+
+    if let Some(ref state) = state {
+        let _ = state.record(&asset.id, &outcome).await;
+    }
+
+    outcome
+}
+
+async fn process_opened_asset(
+    source: &dyn Source,
+    transcoder: &dyn Transcoder,
+    sink: &dyn Sink,
+    asset: &Asset,
+) -> AssetOutcome {
+    let input = match source.open_original(asset).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            return AssetOutcome::Failed {
+                asset_id: asset.id.clone(),
+                error: format!("failed to open original: {e}"),
+            };
+        }
+    };
+
+    let mut transcoded = match transcoder.transcode(input, asset).await {
+        Ok(t) => t,
+        Err(e) => {
+            return AssetOutcome::Failed {
+                asset_id: asset.id.clone(),
+                error: format!("transcode failed: {e}"),
+            };
+        }
+    };
+
+    sink.process(asset, &mut transcoded)
+        .await
+        .unwrap_or_else(|e| AssetOutcome::Failed {
+            asset_id: asset.id.clone(),
+            error: format!("sink processing failed: {e}"),
+        })
 }
 
 #[cfg(test)]
@@ -204,7 +220,7 @@ mod tests {
     use crate::source::Source;
     use crate::transcoder::Transcoder;
     use crate::types::{
-        Asset, MediaCodec, MediaKind, TranscodeStats, TranscodedAsset,
+        Asset, MediaCodec, MediaKind, TranscodeStats, TranscodedAsset, TranscodedPayload,
     };
 
     // ── Mock Source ──────────────────────────────────────────────
@@ -234,11 +250,7 @@ mod tests {
         }
 
         async fn discover(&self) -> Result<BoxStream<'_, Result<Asset>>> {
-            let items: Vec<Result<Asset>> = self
-                .assets
-                .iter()
-                .map(|a| Ok(a.clone()))
-                .collect();
+            let items: Vec<Result<Asset>> = self.assets.iter().map(|a| Ok(a.clone())).collect();
             Ok(futures::stream::iter(items).boxed())
         }
 
@@ -249,8 +261,7 @@ mod tests {
             if self.open_ok {
                 Ok(Box::new(Cursor::new(b"mock-pixels".to_vec())))
             } else {
-                Err(crate::error::PipelineError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Err(crate::error::PipelineError::Io(std::io::Error::other(
                     "open failed",
                 )))
             }
@@ -264,6 +275,7 @@ mod tests {
         output_codec: MediaCodec,
         kind: MediaKind,
         should_fail: bool,
+        delayed_completion: bool,
     }
 
     impl MockTranscoder {
@@ -273,11 +285,17 @@ mod tests {
                 output_codec: output,
                 kind,
                 should_fail: false,
+                delayed_completion: false,
             }
         }
 
         fn with_failure(mut self) -> Self {
             self.should_fail = true;
+            self
+        }
+
+        fn with_delayed_completion(mut self) -> Self {
+            self.delayed_completion = true;
             self
         }
     }
@@ -305,16 +323,19 @@ mod tests {
             _input: Box<dyn std::io::Read + Send + Unpin + 'static>,
             asset: &Asset,
         ) -> Result<TranscodedAsset> {
+            if self.delayed_completion {
+                let millis = if asset.id == "slow" { 50 } else { 1 };
+                tokio::time::sleep(std::time::Duration::from_millis(millis)).await;
+            }
+
             if self.should_fail {
-                return Err(crate::error::PipelineError::Transcoder(
-                    "mock error".into(),
-                ));
+                return Err(crate::error::PipelineError::Transcoder("mock error".into()));
             }
             Ok(TranscodedAsset {
                 original_id: asset.id.clone(),
                 codec: self.output_codec,
                 kind: self.kind,
-                stream: Box::new(Cursor::new(b"transcoded")),
+                payload: TranscodedPayload::Reader(Box::new(Cursor::new(b"transcoded"))),
                 byte_count: 10,
                 original_checksum: None,
                 stats: TranscodeStats {
@@ -363,9 +384,7 @@ mod tests {
             _transcoded: &mut TranscodedAsset,
         ) -> Result<String> {
             if self.store_fail {
-                Err(crate::error::PipelineError::Sink(
-                    "store failed".into(),
-                ))
+                Err(crate::error::PipelineError::Sink("store failed".into()))
             } else {
                 Ok("new-id".into())
             }
@@ -406,7 +425,46 @@ mod tests {
         }
 
         async fn is_completed(&self, asset_id: &str) -> Result<bool> {
-            Ok(self.completed.lock().unwrap().contains(&asset_id.to_string()))
+            Ok(self
+                .completed
+                .lock()
+                .unwrap()
+                .contains(&asset_id.to_string()))
+        }
+
+        async fn completed_ids(&self) -> Result<Vec<String>> {
+            Ok(self.completed.lock().unwrap().clone())
+        }
+    }
+
+    struct RecordingState {
+        completed: std::sync::Mutex<Vec<String>>,
+        records: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl RecordingState {
+        fn new(records: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> Self {
+            Self {
+                completed: std::sync::Mutex::new(Vec::new()),
+                records,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl StateStore for RecordingState {
+        async fn record(&self, asset_id: &str, _outcome: &AssetOutcome) -> Result<()> {
+            self.completed.lock().unwrap().push(asset_id.to_string());
+            self.records.lock().unwrap().push(asset_id.to_string());
+            Ok(())
+        }
+
+        async fn is_completed(&self, asset_id: &str) -> Result<bool> {
+            Ok(self
+                .completed
+                .lock()
+                .unwrap()
+                .contains(&asset_id.to_string()))
         }
 
         async fn completed_ids(&self) -> Result<Vec<String>> {
@@ -452,17 +510,9 @@ mod tests {
     async fn pipeline_skips_unsupported_codec() {
         let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
         let source = MockSource::new(vec![asset]);
-        let transcoder = MockTranscoder::new(
-            &[MediaCodec::Png],
-            MediaCodec::Jxl,
-            MediaKind::Image,
-        );
+        let transcoder = MockTranscoder::new(&[MediaCodec::Png], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(
-            Box::new(source),
-            Box::new(transcoder),
-            Box::new(sink),
-        );
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
 
         let outcomes = std::sync::Mutex::new(Vec::new());
         let summary = pipeline
@@ -480,18 +530,11 @@ mod tests {
     async fn dry_run_skips_all_assets() {
         let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
         let source = MockSource::new(vec![asset]);
-        let transcoder = MockTranscoder::new(
-            &[MediaCodec::Jpeg],
-            MediaCodec::Jxl,
-            MediaKind::Image,
-        );
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(
-            Box::new(source),
-            Box::new(transcoder),
-            Box::new(sink),
-        )
-        .with_dry_run(true);
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_dry_run(true);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.skipped, 1);
@@ -502,17 +545,10 @@ mod tests {
     async fn pipeline_happy_path() {
         let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
         let source = MockSource::new(vec![asset]);
-        let transcoder = MockTranscoder::new(
-            &[MediaCodec::Jpeg],
-            MediaCodec::Jxl,
-            MediaKind::Image,
-        );
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(
-            Box::new(source),
-            Box::new(transcoder),
-            Box::new(sink),
-        );
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.succeeded, 1);
@@ -523,18 +559,11 @@ mod tests {
     async fn pipeline_transcode_failure() {
         let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
         let source = MockSource::new(vec![asset]);
-        let transcoder = MockTranscoder::new(
-            &[MediaCodec::Jpeg],
-            MediaCodec::Jxl,
-            MediaKind::Image,
-        )
-        .with_failure();
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image)
+                .with_failure();
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(
-            Box::new(source),
-            Box::new(transcoder),
-            Box::new(sink),
-        );
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.failed, 1);
@@ -544,17 +573,10 @@ mod tests {
     async fn pipeline_source_open_failure() {
         let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
         let source = MockSource::with_failures(vec![asset], false);
-        let transcoder = MockTranscoder::new(
-            &[MediaCodec::Jpeg],
-            MediaCodec::Jxl,
-            MediaKind::Image,
-        );
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(
-            Box::new(source),
-            Box::new(transcoder),
-            Box::new(sink),
-        );
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.failed, 1);
@@ -567,11 +589,8 @@ mod tests {
             make_asset("a2", MediaCodec::Jpeg, MediaKind::Image),
         ];
         let source = MockSource::new(assets);
-        let transcoder = MockTranscoder::new(
-            &[MediaCodec::Jpeg],
-            MediaCodec::Jxl,
-            MediaKind::Image,
-        );
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
         let state = MockState::new();
 
@@ -587,12 +606,8 @@ mod tests {
             .await
             .unwrap();
 
-        let mut pipeline = Pipeline::new(
-            Box::new(source),
-            Box::new(transcoder),
-            Box::new(sink),
-        )
-        .with_state(Box::new(state));
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_state(Box::new(state));
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         // a1 skipped (already done), a2 succeeds
@@ -608,20 +623,90 @@ mod tests {
             make_asset("a3", MediaCodec::Jpeg, MediaKind::Image),
         ];
         let source = MockSource::new(assets);
-        let transcoder = MockTranscoder::new(
-            &[MediaCodec::Jpeg],
-            MediaCodec::Jxl,
-            MediaKind::Image,
-        );
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(
-            Box::new(source),
-            Box::new(transcoder),
-            Box::new(sink),
-        );
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.succeeded, 3);
         assert_eq!(summary.total(), 3);
+    }
+
+    #[tokio::test]
+    async fn concurrent_pipeline_preserves_summary_counts() {
+        let assets = vec![
+            make_asset("a1", MediaCodec::Jpeg, MediaKind::Image),
+            make_asset("a2", MediaCodec::Png, MediaKind::Image),
+            make_asset("a3", MediaCodec::Jpeg, MediaKind::Image),
+        ];
+        let source = MockSource::new(assets);
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
+        let sink = MockSink::new();
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_concurrency(2);
+
+        let summary = pipeline.run(|_| {}).await.unwrap();
+        assert_eq!(summary.succeeded, 2);
+        assert_eq!(summary.skipped, 1);
+        assert_eq!(summary.total(), 3);
+    }
+
+    #[tokio::test]
+    async fn concurrent_pipeline_reports_completion_order() {
+        let assets = vec![
+            make_asset("slow", MediaCodec::Jpeg, MediaKind::Image),
+            make_asset("fast", MediaCodec::Jpeg, MediaKind::Image),
+        ];
+        let source = MockSource::new(assets);
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image)
+                .with_delayed_completion();
+        let sink = MockSink::new();
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_concurrency(2);
+
+        let outcomes = std::sync::Mutex::new(Vec::new());
+        let summary = pipeline
+            .run(|outcome| {
+                let asset_id = match outcome {
+                    AssetOutcome::Success { asset_id, .. }
+                    | AssetOutcome::PartialSuccess { asset_id, .. }
+                    | AssetOutcome::Skipped { asset_id, .. }
+                    | AssetOutcome::Failed { asset_id, .. } => asset_id,
+                };
+                outcomes.lock().unwrap().push(asset_id);
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(summary.succeeded, 2);
+        assert_eq!(&*outcomes.lock().unwrap(), &["fast", "slow"]);
+    }
+
+    #[tokio::test]
+    async fn state_store_records_once_per_processed_asset() {
+        let assets = vec![
+            make_asset("a1", MediaCodec::Jpeg, MediaKind::Image),
+            make_asset("a2", MediaCodec::Jpeg, MediaKind::Image),
+            make_asset("a3", MediaCodec::Jpeg, MediaKind::Image),
+        ];
+        let source = MockSource::new(assets);
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
+        let sink = MockSink::new();
+        let records = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let state = RecordingState::new(std::sync::Arc::clone(&records));
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_state(Box::new(state))
+            .with_concurrency(2);
+
+        let summary = pipeline.run(|_| {}).await.unwrap();
+        assert_eq!(summary.succeeded, 3);
+
+        let mut records = records.lock().unwrap().clone();
+        records.sort();
+        assert_eq!(records, ["a1", "a2", "a3"]);
     }
 }

@@ -74,51 +74,51 @@ enum Command {
         #[arg(long)]
         image_only: bool,
 
-            /// AV1 CRF (0-63, lower = better).
-            #[arg(long, default_value_t = 20)]
-            video_crf: u32,
+        /// AV1 CRF (0-63, lower = better).
+        #[arg(long, default_value_t = 20)]
+        video_crf: u32,
 
-            /// JXL butteraugli distance (0 = lossless, 1.0 = visually lossless).
-            #[arg(long, default_value_t = 1.0)]
-            image_distance: f32,
+        /// JXL butteraugli distance (0 = lossless, 1.0 = visually lossless).
+        #[arg(long, default_value_t = 1.0)]
+        image_distance: f32,
 
-            /// Dry run (discover only, no transcode/upload).
-            #[arg(long, default_value_t = true)]
-            dry_run: bool,
+        /// Dry run (discover only, no transcode/upload).
+        #[arg(long, default_value_t = true)]
+        dry_run: bool,
 
-            /// Concurrency level.
-            #[arg(long, default_value_t = 2)]
-            concurrency: usize,
-        },
+        /// Concurrency level.
+        #[arg(long, default_value_t = 2)]
+        concurrency: usize,
+    },
 
-        /// Daemon mode: poll for new assets and process them.
-        Watch {
-            /// Immich server URL.
-            #[arg(long, env = "IMMICH_URL")]
-            immich_url: String,
+    /// Daemon mode: poll for new assets and process them.
+    Watch {
+        /// Immich server URL.
+        #[arg(long, env = "IMMICH_URL")]
+        immich_url: String,
 
-            /// Immich API key.
-            #[arg(short, long, env = "IMMICH_API_KEY")]
-            api_key: String,
+        /// Immich API key.
+        #[arg(short, long, env = "IMMICH_API_KEY")]
+        api_key: String,
 
-            /// AV1 CRF (0-63, lower = better).
-            #[arg(long, default_value_t = 20)]
-            video_crf: u32,
+        /// AV1 CRF (0-63, lower = better).
+        #[arg(long, default_value_t = 20)]
+        video_crf: u32,
 
-            /// JXL butteraugli distance.
-            #[arg(long, default_value_t = 1.0)]
-            image_distance: f32,
+        /// JXL butteraugli distance.
+        #[arg(long, default_value_t = 1.0)]
+        image_distance: f32,
 
-            /// Poll interval.
-            #[arg(short, long, default_value = "5min")]
-            interval: String,
+        /// Poll interval.
+        #[arg(short, long, default_value = "5min")]
+        interval: String,
 
         /// Dry run (discover only, no transcode/upload).
         #[arg(long, default_value_t = true)]
         dry_run: bool,
     },
 
-        /// Serve HTTP webhook endpoint for Immich server-side events.
+    /// Serve HTTP webhook endpoint for Immich server-side events.
     Serve {
         /// Bind address.
         #[arg(long, default_value = "0.0.0.0:8088")]
@@ -267,7 +267,9 @@ async fn run_pipeline(
     tracing::info!("=== {} pipeline ===", label);
 
     let (source, transcoder, sink) = build(cfg);
-    let mut pipeline = Pipeline::new(source, transcoder, sink).with_dry_run(cfg.dry_run);
+    let mut pipeline = Pipeline::new(source, transcoder, sink)
+        .with_dry_run(cfg.dry_run)
+        .with_concurrency(cfg.concurrency);
 
     let summary = pipeline
         .run(|outcome| match &outcome {
@@ -448,10 +450,13 @@ mod tests {
         let cli = Cli::try_parse_from([
             "rs-immicher-oxide",
             "run",
-            "--immich-url", "http://localhost:2283",
-            "--api-key", "test-key",
+            "--immich-url",
+            "http://localhost:2283",
+            "--api-key",
+            "test-key",
             "--dry-run",
-        ]).unwrap();
+        ])
+        .unwrap();
 
         match cli.command {
             Command::Run { dry_run, .. } => assert!(dry_run),
@@ -464,10 +469,14 @@ mod tests {
         let cli = Cli::try_parse_from([
             "rs-immicher-oxide",
             "watch",
-            "--immich-url", "http://localhost:2283",
-            "--api-key", "test-key",
-            "--interval", "10min",
-        ]).unwrap();
+            "--immich-url",
+            "http://localhost:2283",
+            "--api-key",
+            "test-key",
+            "--interval",
+            "10min",
+        ])
+        .unwrap();
 
         match cli.command {
             Command::Watch { interval, .. } => assert_eq!(interval, "10min"),
@@ -480,10 +489,14 @@ mod tests {
         let cli = Cli::try_parse_from([
             "rs-immicher-oxide",
             "serve",
-            "--immich-url", "http://localhost:2283",
-            "--api-key", "test-key",
-            "--bind", "0.0.0.0:9090",
-        ]).unwrap();
+            "--immich-url",
+            "http://localhost:2283",
+            "--api-key",
+            "test-key",
+            "--bind",
+            "0.0.0.0:9090",
+        ])
+        .unwrap();
 
         match cli.command {
             Command::Serve { bind, .. } => assert_eq!(bind, "0.0.0.0:9090"),
@@ -496,9 +509,12 @@ mod tests {
         let cli = Cli::try_parse_from([
             "rs-immicher-oxide",
             "run",
-            "--immich-url", "http://localhost:2283",
-            "--api-key", "test-key",
-        ]).unwrap();
+            "--immich-url",
+            "http://localhost:2283",
+            "--api-key",
+            "test-key",
+        ])
+        .unwrap();
 
         match cli.command {
             Command::Run { dry_run, .. } => assert!(dry_run, "dry_run should default to true"),

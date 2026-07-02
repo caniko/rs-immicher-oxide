@@ -70,64 +70,133 @@ mod tests {
 
     #[test]
     fn extension_jpeg() {
-        assert_eq!(codec_from_extension("jpg"), (MediaKind::Image, MediaCodec::Jpeg));
-        assert_eq!(codec_from_extension("jpeg"), (MediaKind::Image, MediaCodec::Jpeg));
-        assert_eq!(codec_from_extension("JPEG"), (MediaKind::Image, MediaCodec::Jpeg));
+        assert_eq!(
+            codec_from_extension("jpg"),
+            (MediaKind::Image, MediaCodec::Jpeg)
+        );
+        assert_eq!(
+            codec_from_extension("jpeg"),
+            (MediaKind::Image, MediaCodec::Jpeg)
+        );
+        assert_eq!(
+            codec_from_extension("JPEG"),
+            (MediaKind::Image, MediaCodec::Jpeg)
+        );
     }
 
     #[test]
     fn extension_png() {
-        assert_eq!(codec_from_extension("png"), (MediaKind::Image, MediaCodec::Png));
+        assert_eq!(
+            codec_from_extension("png"),
+            (MediaKind::Image, MediaCodec::Png)
+        );
     }
 
     #[test]
     fn extension_heic_variants() {
-        assert_eq!(codec_from_extension("heic"), (MediaKind::Image, MediaCodec::Heic));
-        assert_eq!(codec_from_extension("heif"), (MediaKind::Image, MediaCodec::Heic));
-        assert_eq!(codec_from_extension("hif"), (MediaKind::Image, MediaCodec::Heic));
+        assert_eq!(
+            codec_from_extension("heic"),
+            (MediaKind::Image, MediaCodec::Heic)
+        );
+        assert_eq!(
+            codec_from_extension("heif"),
+            (MediaKind::Image, MediaCodec::Heic)
+        );
+        assert_eq!(
+            codec_from_extension("hif"),
+            (MediaKind::Image, MediaCodec::Heic)
+        );
     }
 
     #[test]
     fn extension_video_formats() {
-        assert_eq!(codec_from_extension("mp4"), (MediaKind::Video, MediaCodec::H264));
-        assert_eq!(codec_from_extension("mov"), (MediaKind::Video, MediaCodec::H264));
-        assert_eq!(codec_from_extension("mkv"), (MediaKind::Video, MediaCodec::H265));
-        assert_eq!(codec_from_extension("webm"), (MediaKind::Video, MediaCodec::Vp9));
-        assert_eq!(codec_from_extension("avi"), (MediaKind::Video, MediaCodec::Unknown));
+        assert_eq!(
+            codec_from_extension("mp4"),
+            (MediaKind::Video, MediaCodec::H264)
+        );
+        assert_eq!(
+            codec_from_extension("mov"),
+            (MediaKind::Video, MediaCodec::H264)
+        );
+        assert_eq!(
+            codec_from_extension("mkv"),
+            (MediaKind::Video, MediaCodec::H265)
+        );
+        assert_eq!(
+            codec_from_extension("webm"),
+            (MediaKind::Video, MediaCodec::Vp9)
+        );
+        assert_eq!(
+            codec_from_extension("avi"),
+            (MediaKind::Video, MediaCodec::Unknown)
+        );
     }
 
     #[test]
     fn extension_unknown_returns_image_unknown() {
-        assert_eq!(codec_from_extension("txt"), (MediaKind::Image, MediaCodec::Unknown));
-        assert_eq!(codec_from_extension(""), (MediaKind::Image, MediaCodec::Unknown));
+        assert_eq!(
+            codec_from_extension("txt"),
+            (MediaKind::Image, MediaCodec::Unknown)
+        );
+        assert_eq!(
+            codec_from_extension(""),
+            (MediaKind::Image, MediaCodec::Unknown)
+        );
     }
 
     #[test]
     fn mime_jpeg() {
-        assert_eq!(codec_from_mime("image/jpeg"), (MediaKind::Image, MediaCodec::Jpeg));
+        assert_eq!(
+            codec_from_mime("image/jpeg"),
+            (MediaKind::Image, MediaCodec::Jpeg)
+        );
     }
 
     #[test]
     fn mime_video_formats() {
-        assert_eq!(codec_from_mime("video/mp4"), (MediaKind::Video, MediaCodec::H264));
-        assert_eq!(codec_from_mime("video/quicktime"), (MediaKind::Video, MediaCodec::H264));
-        assert_eq!(codec_from_mime("video/webm"), (MediaKind::Video, MediaCodec::Vp9));
+        assert_eq!(
+            codec_from_mime("video/mp4"),
+            (MediaKind::Video, MediaCodec::H264)
+        );
+        assert_eq!(
+            codec_from_mime("video/quicktime"),
+            (MediaKind::Video, MediaCodec::H264)
+        );
+        assert_eq!(
+            codec_from_mime("video/webm"),
+            (MediaKind::Video, MediaCodec::Vp9)
+        );
     }
 
     #[test]
     fn mime_jxl() {
-        assert_eq!(codec_from_mime("image/jxl"), (MediaKind::Image, MediaCodec::Jxl));
+        assert_eq!(
+            codec_from_mime("image/jxl"),
+            (MediaKind::Image, MediaCodec::Jxl)
+        );
     }
 
     #[test]
     fn mime_unknown() {
-        assert_eq!(codec_from_mime("application/pdf"), (MediaKind::Image, MediaCodec::Unknown));
+        assert_eq!(
+            codec_from_mime("application/pdf"),
+            (MediaKind::Image, MediaCodec::Unknown)
+        );
     }
 
     #[test]
     fn image_mime_constants_are_comprehensive() {
-        let images = ["image/jpeg", "image/png", "image/webp", "image/heic",
-                       "image/heif", "image/avif", "image/tiff", "image/gif", "image/bmp"];
+        let images = [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/heic",
+            "image/heif",
+            "image/avif",
+            "image/tiff",
+            "image/gif",
+            "image/bmp",
+        ];
         for mime in &images {
             assert!(IMAGE_MIME_TYPES.contains(mime), "missing {mime}");
         }
@@ -135,8 +204,13 @@ mod tests {
 
     #[test]
     fn video_mime_constants_are_comprehensive() {
-        let videos = ["video/mp4", "video/quicktime", "video/x-matroska",
-                       "video/webm", "video/x-msvideo"];
+        let videos = [
+            "video/mp4",
+            "video/quicktime",
+            "video/x-matroska",
+            "video/webm",
+            "video/x-msvideo",
+        ];
         for mime in &videos {
             assert!(VIDEO_MIME_TYPES.contains(mime), "missing {mime}");
         }
