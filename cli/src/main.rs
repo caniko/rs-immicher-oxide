@@ -59,7 +59,7 @@ enum Command {
     /// One-shot conversion: discover existing assets, transcode, upload.
     Run {
         /// Immich server URL.
-        #[arg(short, long, env = "IMMICH_URL")]
+        #[arg(long, env = "IMMICH_URL")]
         immich_url: String,
 
         /// Immich API key.
@@ -125,7 +125,7 @@ enum Command {
         bind: String,
 
         /// Immich server URL.
-        #[arg(short, long, env = "IMMICH_URL")]
+        #[arg(long, env = "IMMICH_URL")]
         immich_url: String,
 
         /// Immich API key.
