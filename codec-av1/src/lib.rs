@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use std::io::Read;
 
-use avio::{EncoderConfig, HwAccel, Pipeline, AudioCodec, VideoCodec};
+use avio::{
+    AudioCodec, EncoderConfig, HwAccel, Pipeline, Preset, VideoCodec, VideoCodecOptions,
+};
 use rs_immicher_oxide_core::error::{PipelineError, Result};
 use rs_immicher_oxide_core::transcoder::Transcoder;
 use rs_immicher_oxide_core::types::{
@@ -69,11 +71,20 @@ impl Transcoder for SvtAv1UhqTranscoder {
         std::fs::write(&input_path, &data).map_err(PipelineError::Io)?;
         drop(data);
 
-        // Build the encoder configuration
+        use avio::SvtAv1Options;
+
+        // Build the encoder configuration with SVT-AV1 tune=3 (UHQ)
         let config = EncoderConfig::builder()
             .video_codec(VideoCodec::Av1Svt)
             .audio_codec(AudioCodec::Opus)
             .crf(self.crf)
+            .preset(Preset::Slow)
+            .codec_options(VideoCodecOptions::Av1Svt(SvtAv1Options {
+                preset: 6,
+                tile_rows: 1,
+                tile_cols: 2,
+                svtav1_params: Some("tune=3:enable-overlays=1".into()),
+            }))
             .hardware(HwAccel::Vaapi)
             .build();
 
