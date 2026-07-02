@@ -2,7 +2,7 @@
   description = "Immich transpiler framework — transcode originals to AV1/JXL";
 
   inputs = {
-    rs-harbor.url = "path:/data/nvme0/can/Projects/rs-harbor";
+    rs-harbor.url = "git+https://codeberg.org/caniko/rs-harbor.git?ref=trunk";
     nixpkgs.follows = "rs-harbor/nixpkgs";
     rust-overlay.follows = "rs-harbor/rust-overlay";
     crane.follows = "rs-harbor/crane";

@@ -66,6 +66,32 @@
         "type": "github"
       }
     },
+    "meta-harbor": {
+      "inputs": {
+        "flake-utils": [
+          "rs-harbor",
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "rs-harbor",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1783029608,
+        "narHash": "sha256-ThzqhX3rAbJBL1Ggk1PCFD1UEd4PQpddvcVVBunKOLE=",
+        "ref": "trunk",
+        "rev": "ffbf7e84570174dcb4aefef851d79cb3730fc68c",
+        "revCount": 1,
+        "type": "git",
+        "url": "https://codeberg.org/caniko/meta-harbor.git"
+      },
+      "original": {
+        "ref": "trunk",
+        "type": "git",
+        "url": "https://codeberg.org/caniko/meta-harbor.git"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1781607440,
@@ -158,20 +184,25 @@
       "inputs": {
         "crane": "crane",
         "flake-utils": "flake-utils",
+        "meta-harbor": "meta-harbor",
         "nixpkgs": "nixpkgs",
         "osxcross": "osxcross",
         "plinth": "plinth",
         "rust-overlay": "rust-overlay_2"
       },
       "locked": {
-        "lastModified": 1782899100,
-        "narHash": "sha256-G61cqRIWHVhEUdpsLucIXKTUJpE8PjCSrnQS8vZa5mE=",
-        "path": "/data/nvme0/can/Projects/rs-harbor",
-        "type": "path"
+        "lastModified": 1783029677,
+        "narHash": "sha256-IctbVpb6ZaJPZyU37KPEAGSmzDnZEOlBdThZ8b3d1Bw=",
+        "ref": "trunk",
+        "rev": "09e1744328c0bbb34630f3d5cff5f801753311a1",
+        "revCount": 98,
+        "type": "git",
+        "url": "https://codeberg.org/caniko/rs-harbor.git"
       },
       "original": {
-        "path": "/data/nvme0/can/Projects/rs-harbor",
-        "type": "path"
+        "ref": "trunk",
+        "type": "git",
+        "url": "https://codeberg.org/caniko/rs-harbor.git"
       }
     },
     "rust-overlay": {
