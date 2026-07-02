@@ -402,3 +402,107 @@ fn parse_duration(s: &str) -> anyhow::Result<Duration> {
         Ok(Duration::from_secs(secs))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_seconds() {
+        let d = parse_duration("30s").unwrap();
+        assert_eq!(d, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn parse_minutes() {
+        let d = parse_duration("5min").unwrap();
+        assert_eq!(d, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn parse_hours() {
+        let d = parse_duration("2h").unwrap();
+        assert_eq!(d, Duration::from_secs(7200));
+    }
+
+    #[test]
+    fn parse_plain_number_as_seconds() {
+        let d = parse_duration("90").unwrap();
+        assert_eq!(d, Duration::from_secs(90));
+    }
+
+    #[test]
+    fn parse_with_whitespace() {
+        let d = parse_duration("  10min  ").unwrap();
+        assert_eq!(d, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn parse_invalid_returns_error() {
+        let result = parse_duration("abc");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_run_parses() {
+        let cli = Cli::try_parse_from([
+            "rs-immicher-oxide",
+            "run",
+            "--immich-url", "http://localhost:2283",
+            "--api-key", "test-key",
+            "--dry-run",
+        ]).unwrap();
+
+        match cli.command {
+            Command::Run { dry_run, .. } => assert!(dry_run),
+            _ => panic!("expected Run command"),
+        }
+    }
+
+    #[test]
+    fn cli_watch_parses() {
+        let cli = Cli::try_parse_from([
+            "rs-immicher-oxide",
+            "watch",
+            "--immich-url", "http://localhost:2283",
+            "--api-key", "test-key",
+            "--interval", "10min",
+        ]).unwrap();
+
+        match cli.command {
+            Command::Watch { interval, .. } => assert_eq!(interval, "10min"),
+            _ => panic!("expected Watch command"),
+        }
+    }
+
+    #[test]
+    fn cli_serve_parses() {
+        let cli = Cli::try_parse_from([
+            "rs-immicher-oxide",
+            "serve",
+            "--immich-url", "http://localhost:2283",
+            "--api-key", "test-key",
+            "--bind", "0.0.0.0:9090",
+        ]).unwrap();
+
+        match cli.command {
+            Command::Serve { bind, .. } => assert_eq!(bind, "0.0.0.0:9090"),
+            _ => panic!("expected Serve command"),
+        }
+    }
+
+    #[test]
+    fn cli_default_dry_run_is_true() {
+        let cli = Cli::try_parse_from([
+            "rs-immicher-oxide",
+            "run",
+            "--immich-url", "http://localhost:2283",
+            "--api-key", "test-key",
+        ]).unwrap();
+
+        match cli.command {
+            Command::Run { dry_run, .. } => assert!(dry_run, "dry_run should default to true"),
+            _ => panic!("expected Run command"),
+        }
+    }
+}

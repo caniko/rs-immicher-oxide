@@ -22,6 +22,7 @@ type ApiResult<T> = std::result::Result<T, ApiError>;
 // ── DTOs ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetResponseDto {
     pub id: String,
     pub checksum: Option<String>,
@@ -43,7 +44,7 @@ pub struct ExifResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "UPPERCASE")]
 pub enum AssetType {
     Image,
     Video,
@@ -115,6 +116,7 @@ pub struct BulkIdResponseDto {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlbumResponseDto {
     pub id: String,
     pub album_name: String,

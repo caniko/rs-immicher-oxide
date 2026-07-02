@@ -190,12 +190,21 @@ mod tests {
 
     #[test]
     fn builder_should_store_all_fields() {
+        use ff_encode::SvtAv1Options;
+
         let config = EncoderConfig::builder()
             .video_codec(VideoCodec::H265)
             .audio_codec(AudioCodec::Opus)
             .bitrate_mode(BitrateMode::Cbr(4_000_000))
             .resolution(1280, 720)
             .framerate(30.0)
+            .codec_options(VideoCodecOptions::Av1Svt(SvtAv1Options {
+                preset: 6,
+                tile_rows: 1,
+                tile_cols: 2,
+                svtav1_params: Some("tune=3".into()),
+            }))
+            .preset(Preset::Slow)
             .build();
 
         assert!(matches!(config.video_codec, VideoCodec::H265));
@@ -203,6 +212,8 @@ mod tests {
         assert!(matches!(config.bitrate_mode, BitrateMode::Cbr(4_000_000)));
         assert_eq!(config.resolution, Some((1280, 720)));
         assert_eq!(config.framerate, Some(30.0));
+        assert!(config.codec_options.is_some());
+        assert!(config.preset.is_some());
     }
 
     #[test]

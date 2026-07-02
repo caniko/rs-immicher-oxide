@@ -121,6 +121,186 @@ impl Transcoder for JxlTranscoder {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::ImageEncoder;
+    use jxl_encoder::LossyConfig;
+
+    use serde_json;
+
+    /// JXL magic bytes: FF 0A (ISO media format, file type box "JXL ")
+    const JXL_MAGIC: &[u8] = &[0xFF, 0x0A];
+
+    /// Generate a 4×4 RGB test pattern.
+    fn test_rgb_pixels() -> (Vec<u8>, u32, u32) {
+        let w = 4u32;
+        let h = 4u32;
+        // 4x4 pixels: red, green, blue, white repeated
+        let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let r = if x % 2 == 0 { 255 } else { 0 };
+                let g = if y % 2 == 0 { 255 } else { 0 };
+                let b = if (x + y) % 2 == 0 { 255 } else { 0 };
+                pixels.push(r);
+                pixels.push(g);
+                pixels.push(b);
+            }
+        }
+        (pixels, w, h)
+    }
+
+    /// Create an in-memory PNG from raw RGB pixels.
+    fn rgb_to_png_bytes(pixels: &[u8], w: u32, h: u32) -> Vec<u8> {
+        use std::io::Cursor;
+        let mut buf = Cursor::new(Vec::new());
+        let encoder = image::codecs::png::PngEncoder::new(&mut buf);
+        encoder
+            .write_image(pixels, w, h, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        buf.into_inner()
+    }
+
+    #[test]
+    fn encode_lossy_jxl_has_correct_magic() {
+        let (pixels, w, h) = test_rgb_pixels();
+        let jxl = LossyConfig::new(1.0)
+            .with_effort(1)
+            .encode(&pixels, w, h, PixelLayout::Rgb8)
+            .expect("JXL lossy encode should succeed");
+        assert!(!jxl.is_empty(), "JXL output should not be empty");
+        assert_eq!(&jxl[..2], JXL_MAGIC, "JXL should start with magic bytes");
+    }
+
+    #[test]
+    fn encode_lossless_jxl_has_correct_magic() {
+        let (pixels, w, h) = test_rgb_pixels();
+        let jxl = LosslessConfig::new()
+            .with_effort(1)
+            .encode(&pixels, w, h, PixelLayout::Rgb8)
+            .expect("JXL lossless encode should succeed");
+        assert!(!jxl.is_empty(), "JXL output should not be empty");
+        assert_eq!(&jxl[..2], JXL_MAGIC, "JXL should start with magic bytes");
+    }
+
+    #[test]
+    fn decode_rgb8_roundtrips_png() {
+        let (orig_pixels, w, h) = test_rgb_pixels();
+        let png_bytes = rgb_to_png_bytes(&orig_pixels, w, h);
+
+        let (decoded_pixels, dw, dh) =
+            decode_rgb8(&png_bytes).expect("PNG decode should succeed");
+
+        assert_eq!(dw, w, "decoded width should match");
+        assert_eq!(dh, h, "decoded height should match");
+        assert_eq!(decoded_pixels.len(), orig_pixels.len(), "pixel count should match");
+        assert_eq!(decoded_pixels, orig_pixels, "pixel data should be identical");
+    }
+
+    #[test]
+    fn jxl_transcoder_lossy_produces_valid_output() {
+        let (pixels, w, h) = test_rgb_pixels();
+        let png_bytes = rgb_to_png_bytes(&pixels, w, h);
+
+        let asset = Asset {
+            id: "test".into(),
+            filename: "test.png".into(),
+            kind: MediaKind::Image,
+            codec: MediaCodec::Png,
+            mime_type: Some("image/png".into()),
+            size_bytes: Some(png_bytes.len() as u64),
+            created_at: None,
+            checksum: None,
+            metadata: serde_json::json!({}),
+        };
+
+        let transcoder = JxlTranscoder::new(1.0).with_effort(1);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async {
+            transcoder
+                .transcode(Box::new(Cursor::new(png_bytes)), &asset)
+                .await
+        });
+
+        assert!(result.is_ok(), "transcode should succeed");
+        let ta = result.unwrap();
+        assert_eq!(ta.codec, MediaCodec::Jxl);
+        assert!(ta.byte_count > 0, "output should have bytes");
+        assert_eq!(&ta.stats.encoder, "jxl-visual-lossless");
+    }
+
+    #[test]
+    fn jxl_transcoder_lossless_produces_valid_output() {
+        let (pixels, w, h) = test_rgb_pixels();
+        let png_bytes = rgb_to_png_bytes(&pixels, w, h);
+
+        let asset = Asset {
+            id: "test".into(),
+            filename: "test.png".into(),
+            kind: MediaKind::Image,
+            codec: MediaCodec::Png,
+            mime_type: Some("image/png".into()),
+            size_bytes: Some(png_bytes.len() as u64),
+            created_at: None,
+            checksum: None,
+            metadata: serde_json::json!({}),
+        };
+
+        let transcoder = JxlTranscoder::new(0.0).with_effort(1);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async {
+            transcoder
+                .transcode(Box::new(Cursor::new(png_bytes)), &asset)
+                .await
+        });
+
+        assert!(result.is_ok(), "lossless transcode should succeed");
+        let ta = result.unwrap();
+        assert_eq!(ta.codec, MediaCodec::Jxl);
+        assert!(ta.byte_count > 0);
+    }
+
+    #[test]
+    fn can_handle_checks_codec() {
+        let transcoder = JxlTranscoder::new(1.0);
+        let jpeg_asset = Asset {
+            id: "j".into(),
+            filename: "a.jpg".into(),
+            kind: MediaKind::Image,
+            codec: MediaCodec::Jpeg,
+            mime_type: None,
+            size_bytes: None,
+            created_at: None,
+            checksum: None,
+            metadata: serde_json::json!({}),
+        };
+        assert!(transcoder.can_handle(&jpeg_asset), "should handle JPEG");
+
+        let video_asset = Asset {
+            id: "v".into(),
+            filename: "a.mp4".into(),
+            kind: MediaKind::Video,
+            codec: MediaCodec::H264,
+            mime_type: None,
+            size_bytes: None,
+            created_at: None,
+            checksum: None,
+            metadata: serde_json::json!({}),
+        };
+        assert!(!transcoder.can_handle(&video_asset), "should not handle video");
+    }
+
+    #[test]
+    fn label_changes_with_distance() {
+        let lossy = JxlTranscoder::new(1.0);
+        assert_eq!(lossy.label_str(), "jxl-visual-lossless");
+
+        let lossless = JxlTranscoder::new(0.0);
+        assert_eq!(lossless.label_str(), "jxl-lossless");
+    }
+}
+
 impl JxlTranscoder {
     fn encode_pixels(&self, data: &[u8]) -> Result<Vec<u8>> {
         let (pixels, w, h) = decode_rgb8(data)
