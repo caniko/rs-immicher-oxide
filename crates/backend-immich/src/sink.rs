@@ -3,7 +3,7 @@ use std::io::Read;
 
 use rs_immicher_oxide_core::error::{PipelineError, Result};
 use rs_immicher_oxide_core::sink::Sink;
-use rs_immicher_oxide_core::types::{Asset, TranscodedAsset};
+use rs_immicher_oxide_core::types::{Asset, TranscodedAsset, TranscodedPayload};
 
 use crate::client::{AssetBulkUpdateDto, ImmichApiClient};
 use crate::ImmichConfig;
@@ -68,13 +68,6 @@ impl Sink for ImmichSink {
     }
 
     async fn store(&self, original: &Asset, transcoded: &mut TranscodedAsset) -> Result<String> {
-        // Read all output bytes
-        let mut data = Vec::with_capacity(transcoded.byte_count as usize);
-        transcoded
-            .stream
-            .read_to_end(&mut data)
-            .map_err(PipelineError::Io)?;
-
         let filename = Self::output_filename(original);
 
         // Use original timestamps for the upload
@@ -89,17 +82,34 @@ impl Sink for ImmichSink {
             .and_then(|v| v.as_str())
             .unwrap_or(file_created_at);
 
-        let resp = self
-            .client
-            .upload_asset(
-                data,
-                file_created_at,
-                file_modified_at,
-                &filename,
-                is_favorite.unwrap_or(false),
-            )
-            .await
-            .map_err(|e| PipelineError::Sink(Box::new(e)))?;
+        let resp = match &mut transcoded.payload {
+            TranscodedPayload::Reader(stream) => {
+                let mut data = Vec::with_capacity(transcoded.byte_count as usize);
+                stream.read_to_end(&mut data).map_err(PipelineError::Io)?;
+                self.client
+                    .upload_asset(
+                        data,
+                        file_created_at,
+                        file_modified_at,
+                        &filename,
+                        is_favorite.unwrap_or(false),
+                    )
+                    .await
+            }
+            TranscodedPayload::File { path, .. } => {
+                self.client
+                    .upload_asset_file(
+                        path,
+                        transcoded.byte_count,
+                        file_created_at,
+                        file_modified_at,
+                        &filename,
+                        is_favorite.unwrap_or(false),
+                    )
+                    .await
+            }
+        }
+        .map_err(|e| PipelineError::Sink(Box::new(e)))?;
 
         Ok(resp.id)
     }

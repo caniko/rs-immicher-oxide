@@ -1,5 +1,8 @@
+use std::path::Path;
+
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
+use tokio_util::io::ReaderStream;
 
 use super::ImmichConfig;
 
@@ -263,18 +266,46 @@ impl ImmichApiClient {
         filename: &str,
         is_favorite: bool,
     ) -> ApiResult<AssetMediaResponseDto> {
-        let mime = if filename.ends_with(".mp4") || filename.ends_with(".jxl") {
-            // We don't know exact MIME; let Immich detect from extension
-            "application/octet-stream"
-        } else {
-            "application/octet-stream"
-        };
-
         let part = multipart::Part::bytes(asset_data)
             .file_name(filename.to_string())
-            .mime_str(mime)
+            .mime_str(asset_mime(filename))
             .map_err(|e| ApiError::Status(e.to_string()))?;
 
+        self.upload_asset_part(part, file_created_at, file_modified_at, is_favorite)
+            .await
+    }
+
+    /// POST /assets — upload a transcoded asset from a file without buffering it.
+    pub async fn upload_asset_file(
+        &self,
+        asset_path: &Path,
+        byte_count: u64,
+        file_created_at: &str,
+        file_modified_at: &str,
+        filename: &str,
+        is_favorite: bool,
+    ) -> ApiResult<AssetMediaResponseDto> {
+        let file = tokio::fs::File::open(asset_path)
+            .await
+            .map_err(|e| ApiError::Status(format!("open upload file: {e}")))?;
+        let stream = ReaderStream::new(file);
+        let body = reqwest::Body::wrap_stream(stream);
+        let part = multipart::Part::stream_with_length(body, byte_count)
+            .file_name(filename.to_string())
+            .mime_str(asset_mime(filename))
+            .map_err(|e| ApiError::Status(e.to_string()))?;
+
+        self.upload_asset_part(part, file_created_at, file_modified_at, is_favorite)
+            .await
+    }
+
+    async fn upload_asset_part(
+        &self,
+        part: multipart::Part,
+        file_created_at: &str,
+        file_modified_at: &str,
+        is_favorite: bool,
+    ) -> ApiResult<AssetMediaResponseDto> {
         let form = multipart::Form::new()
             .part("assetData", part)
             .text("fileCreatedAt", file_created_at.to_string())
@@ -385,4 +416,8 @@ impl ImmichApiClient {
         self.check_response(resp).await?;
         Ok(())
     }
+}
+
+fn asset_mime(_filename: &str) -> &'static str {
+    "application/octet-stream"
 }

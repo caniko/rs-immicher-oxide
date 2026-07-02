@@ -5,7 +5,7 @@ use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
 use rs_immicher_oxide_core::error::{PipelineError, Result};
 use rs_immicher_oxide_core::transcoder::Transcoder;
 use rs_immicher_oxide_core::types::{
-    Asset, MediaCodec, MediaKind, TranscodeStats, TranscodedAsset,
+    Asset, MediaCodec, MediaKind, TranscodeStats, TranscodedAsset, TranscodedPayload,
 };
 
 /// JPEG XL transcoder — pure Rust, no subprocess.
@@ -101,7 +101,7 @@ impl Transcoder for JxlTranscoder {
             original_id: asset.id.clone(),
             codec: MediaCodec::Jxl,
             kind: MediaKind::Image,
-            stream: Box::new(Cursor::new(jxl_bytes)),
+            payload: TranscodedPayload::Reader(Box::new(Cursor::new(jxl_bytes))),
             byte_count: output_bytes,
             original_checksum: asset.checksum.clone(),
             stats: TranscodeStats {
@@ -121,13 +121,38 @@ impl Transcoder for JxlTranscoder {
     }
 }
 
+impl JxlTranscoder {
+    fn encode_pixels(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let (pixels, w, h) = decode_rgb8(data)
+            .map_err(|e| PipelineError::Transcoder(Box::new(std::io::Error::other(e))))?;
+
+        if self.distance == 0.0 {
+            LosslessConfig::new()
+                .with_effort(self.effort)
+                .encode(&pixels, w, h, PixelLayout::Rgb8)
+                .map_err(|e| {
+                    PipelineError::Transcoder(Box::new(std::io::Error::other(format!(
+                        "JXL lossless encode failed: {e}"
+                    ))))
+                })
+        } else {
+            LossyConfig::new(self.distance)
+                .with_effort(self.effort)
+                .encode(&pixels, w, h, PixelLayout::Rgb8)
+                .map_err(|e| {
+                    PipelineError::Transcoder(Box::new(std::io::Error::other(format!(
+                        "JXL lossy encode failed: {e}"
+                    ))))
+                })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::ImageEncoder;
     use jxl_encoder::LossyConfig;
-
-    use serde_json;
 
     /// JXL magic bytes: FF 0A (ISO media format, file type box "JXL ")
     const JXL_MAGIC: &[u8] = &[0xFF, 0x0A];
@@ -189,13 +214,19 @@ mod tests {
         let (orig_pixels, w, h) = test_rgb_pixels();
         let png_bytes = rgb_to_png_bytes(&orig_pixels, w, h);
 
-        let (decoded_pixels, dw, dh) =
-            decode_rgb8(&png_bytes).expect("PNG decode should succeed");
+        let (decoded_pixels, dw, dh) = decode_rgb8(&png_bytes).expect("PNG decode should succeed");
 
         assert_eq!(dw, w, "decoded width should match");
         assert_eq!(dh, h, "decoded height should match");
-        assert_eq!(decoded_pixels.len(), orig_pixels.len(), "pixel count should match");
-        assert_eq!(decoded_pixels, orig_pixels, "pixel data should be identical");
+        assert_eq!(
+            decoded_pixels.len(),
+            orig_pixels.len(),
+            "pixel count should match"
+        );
+        assert_eq!(
+            decoded_pixels, orig_pixels,
+            "pixel data should be identical"
+        );
     }
 
     #[test]
@@ -288,7 +319,10 @@ mod tests {
             checksum: None,
             metadata: serde_json::json!({}),
         };
-        assert!(!transcoder.can_handle(&video_asset), "should not handle video");
+        assert!(
+            !transcoder.can_handle(&video_asset),
+            "should not handle video"
+        );
     }
 
     #[test]
@@ -298,32 +332,5 @@ mod tests {
 
         let lossless = JxlTranscoder::new(0.0);
         assert_eq!(lossless.label_str(), "jxl-lossless");
-    }
-}
-
-impl JxlTranscoder {
-    fn encode_pixels(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let (pixels, w, h) = decode_rgb8(data)
-            .map_err(|e| PipelineError::Transcoder(Box::new(std::io::Error::other(e))))?;
-
-        if self.distance == 0.0 {
-            LosslessConfig::new()
-                .with_effort(self.effort)
-                .encode(&pixels, w, h, PixelLayout::Rgb8)
-                .map_err(|e| {
-                    PipelineError::Transcoder(Box::new(std::io::Error::other(format!(
-                        "JXL lossless encode failed: {e}"
-                    ))))
-                })
-        } else {
-            LossyConfig::new(self.distance)
-                .with_effort(self.effort)
-                .encode(&pixels, w, h, PixelLayout::Rgb8)
-                .map_err(|e| {
-                    PipelineError::Transcoder(Box::new(std::io::Error::other(format!(
-                        "JXL lossy encode failed: {e}"
-                    ))))
-                })
-        }
     }
 }

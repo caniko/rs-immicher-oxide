@@ -76,6 +76,18 @@ pub struct Asset {
     pub metadata: serde_json::Value,
 }
 
+/// Encoded bytes produced by a transcoder.
+pub enum TranscodedPayload {
+    /// Reader-backed output, used when the encoder already produces bytes in memory.
+    Reader(Box<dyn Read + Send + Unpin + 'static>),
+    /// File-backed output, used for large outputs that should not be loaded into memory.
+    File {
+        path: std::path::PathBuf,
+        /// Keeps temporary storage alive until the payload is dropped.
+        _guard: Box<dyn Send>,
+    },
+}
+
 /// A transcoded asset ready for storage.
 pub struct TranscodedAsset {
     /// The original asset this was transcoded from.
@@ -84,8 +96,8 @@ pub struct TranscodedAsset {
     pub codec: MediaCodec,
     /// The output media kind.
     pub kind: MediaKind,
-    /// Streaming byte reader for the encoded output.
-    pub stream: Box<dyn Read + Send + Unpin + 'static>,
+    /// Encoded output bytes.
+    pub payload: TranscodedPayload,
     /// Total byte count of the output.
     pub byte_count: u64,
     /// Original checksum for verification.

@@ -1,13 +1,11 @@
 use async_trait::async_trait;
 use std::io::Read;
 
-use avio::{
-    AudioCodec, EncoderConfig, HwAccel, Pipeline, Preset, VideoCodec, VideoCodecOptions,
-};
+use avio::{AudioCodec, EncoderConfig, HwAccel, Pipeline, Preset, VideoCodec, VideoCodecOptions};
 use rs_immicher_oxide_core::error::{PipelineError, Result};
 use rs_immicher_oxide_core::transcoder::Transcoder;
 use rs_immicher_oxide_core::types::{
-    Asset, MediaCodec, MediaKind, TranscodeStats, TranscodedAsset,
+    Asset, MediaCodec, MediaKind, TranscodeStats, TranscodedAsset, TranscodedPayload,
 };
 
 /// SVT-AV1 transcoder — pure Rust via avio Pipeline, no subprocess.
@@ -60,16 +58,13 @@ impl Transcoder for SvtAv1UhqTranscoder {
         let start = std::time::Instant::now();
 
         // Write input to tmpfs temp file (Pipeline works with file paths)
-        let tmp = tempfile::TempDir::with_prefix("rs-immich-av1-")
-            .map_err(PipelineError::Io)?;
+        let tmp = tempfile::TempDir::with_prefix("rs-immich-av1-").map_err(PipelineError::Io)?;
         let input_path = tmp.path().join("input");
         let output_path = tmp.path().join("output.mp4");
 
-        let mut data = Vec::with_capacity(asset.size_bytes.unwrap_or(8_388_608) as usize);
-        input.read_to_end(&mut data).map_err(PipelineError::Io)?;
-        let input_bytes = data.len() as u64;
-        std::fs::write(&input_path, &data).map_err(PipelineError::Io)?;
-        drop(data);
+        let mut input_file = std::fs::File::create(&input_path).map_err(PipelineError::Io)?;
+        let input_bytes = std::io::copy(&mut input, &mut input_file).map_err(PipelineError::Io)?;
+        drop(input_file);
 
         use avio::SvtAv1Options;
 
@@ -92,36 +87,37 @@ impl Transcoder for SvtAv1UhqTranscoder {
         // Pipeline::run() is synchronous (FFmpeg-native decode→filter→encode loop).
         // It blocks the current thread, which is acceptable for long-lived
         // transcode operations running in a dedicated task.
-        tracing::debug!("av1 pipeline: {} → {}", input_path.display(), output_path.display());
+        tracing::debug!(
+            "av1 pipeline: {} → {}",
+            input_path.display(),
+            output_path.display()
+        );
 
         Pipeline::builder()
             .input(input_path.to_str().unwrap())
             .output(output_path.to_str().unwrap(), config)
             .build()
             .map_err(|e| {
-                PipelineError::Transcoder(
-                    format!("avio pipeline build failed: {e}").into(),
-                )
+                PipelineError::Transcoder(format!("avio pipeline build failed: {e}").into())
             })?
             .run()
             .map_err(|e| {
-                PipelineError::Transcoder(
-                    format!("avio pipeline run failed: {e}").into(),
-                )
+                PipelineError::Transcoder(format!("avio pipeline run failed: {e}").into())
             })?;
 
-        // Read output
-        let output_bytes = std::fs::read(&output_path).map_err(PipelineError::Io)?;
-        let byte_count = output_bytes.len() as u64;
+        let byte_count = std::fs::metadata(&output_path)
+            .map_err(PipelineError::Io)?
+            .len();
         let elapsed = start.elapsed();
-
-        // TempDir drops and cleans up tmpfs files here
 
         Ok(TranscodedAsset {
             original_id: asset.id.clone(),
             codec: MediaCodec::Av1,
             kind: MediaKind::Video,
-            stream: Box::new(std::io::Cursor::new(output_bytes)),
+            payload: TranscodedPayload::File {
+                path: output_path,
+                _guard: Box::new(tmp),
+            },
             byte_count,
             original_checksum: asset.checksum.clone(),
             stats: TranscodeStats {

@@ -25,7 +25,11 @@ fn make_asset_item(id: &str, fname: &str, mime: &str) -> serde_json::Value {
     })
 }
 
-fn make_search_response(items: Vec<serde_json::Value>, next_page: Option<&str>, total: i32) -> serde_json::Value {
+fn make_search_response(
+    items: Vec<serde_json::Value>,
+    next_page: Option<&str>,
+    total: i32,
+) -> serde_json::Value {
     serde_json::json!({
         "assets": {
             "items": items,
@@ -40,12 +44,16 @@ fn make_search_response(items: Vec<serde_json::Value>, next_page: Option<&str>, 
 #[tokio::test]
 async fn search_assets_returns_items() {
     let mock = MockServer::start().await;
-    let body = make_search_response(vec![make_asset_item("asset-1", "photo.jpg", "image/jpeg")], None, 1);
+    let body = make_search_response(
+        vec![make_asset_item("asset-1", "photo.jpg", "image/jpeg")],
+        None,
+        1,
+    );
 
     Mock::given(method("POST"))
         .and(path("/search/metadata"))
         .and(header("x-api-key", "test-api-key"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .mount(&mock)
         .await;
 
@@ -76,7 +84,7 @@ async fn search_all_assets_returns_all_items() {
     Mock::given(method("POST"))
         .and(path("/search/metadata"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(&make_search_response(
+            ResponseTemplate::new(200).set_body_json(make_search_response(
                 vec![make_asset_item("a1", "a1.jpg", "image/jpeg")],
                 None,
                 1,
