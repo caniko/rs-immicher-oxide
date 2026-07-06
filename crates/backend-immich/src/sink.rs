@@ -3,9 +3,11 @@ use std::io::Read;
 
 use rs_immicher_oxide_core::error::{PipelineError, Result};
 use rs_immicher_oxide_core::sink::Sink;
-use rs_immicher_oxide_core::types::{Asset, TranscodedAsset, TranscodedPayload};
+use rs_immicher_oxide_core::types::{
+    Asset, MediaCodec, MediaKind, TranscodedAsset, TranscodedPayload,
+};
 
-use crate::client::{AssetBulkUpdateDto, ImmichApiClient};
+use crate::client::{AssetBulkUpdateDto, AssetMediaStatus, AssetType, ImmichApiClient};
 use crate::ImmichConfig;
 
 /// Sink that uploads transcoded assets to Immich, copies metadata,
@@ -111,6 +113,12 @@ impl Sink for ImmichSink {
         }
         .map_err(|e| PipelineError::Sink(Box::new(e)))?;
 
+        if resp.status == AssetMediaStatus::Duplicate {
+            return Err(PipelineError::Sink(
+                format!("Immich reported duplicate upload for replacement asset {filename}").into(),
+            ));
+        }
+
         Ok(resp.id)
     }
 
@@ -148,11 +156,91 @@ impl Sink for ImmichSink {
         Ok(())
     }
 
-    async fn verify(&self, new_id: &str) -> Result<bool> {
-        match self.client.get_asset_info(new_id).await {
-            Ok(info) => Ok(!info.id.is_empty()),
-            Err(_) => Ok(false),
+    async fn verify(
+        &self,
+        original: &Asset,
+        output_codec: MediaCodec,
+        byte_count: u64,
+        new_id: &str,
+    ) -> Result<()> {
+        let info = self
+            .client
+            .get_asset_info(new_id)
+            .await
+            .map_err(|e| PipelineError::Sink(Box::new(e)))?;
+
+        if info.id != new_id {
+            return Err(PipelineError::Sink(
+                format!("new asset id mismatch: expected {new_id}, got {}", info.id).into(),
+            ));
         }
+
+        let expected_type = match original.kind {
+            MediaKind::Image => AssetType::Image,
+            MediaKind::Video => AssetType::Video,
+        };
+        if info.asset_type != expected_type {
+            return Err(PipelineError::Sink(
+                format!(
+                    "new asset type mismatch: expected {:?}, got {:?}",
+                    expected_type, info.asset_type
+                )
+                .into(),
+            ));
+        }
+
+        let expected_filename = Self::output_filename(original);
+        if info.original_file_name != expected_filename {
+            return Err(PipelineError::Sink(
+                format!(
+                    "new asset filename mismatch: expected {expected_filename}, got {}",
+                    info.original_file_name
+                )
+                .into(),
+            ));
+        }
+
+        if info.is_trashed.unwrap_or(false) {
+            return Err(PipelineError::Sink("new asset is already trashed".into()));
+        }
+
+        if output_codec != transcoded_codec_for(original.kind) {
+            return Err(PipelineError::Sink(
+                format!(
+                    "new asset codec mismatch: expected {:?}, got {:?}",
+                    transcoded_codec_for(original.kind),
+                    output_codec
+                )
+                .into(),
+            ));
+        }
+
+        if byte_count == 0 {
+            return Err(PipelineError::Sink("transcoded output is empty".into()));
+        }
+
+        if let Some(size) = info.exif_info.as_ref().and_then(|e| e.file_size_in_byte) {
+            if size <= 0 {
+                return Err(PipelineError::Sink(
+                    format!("new asset reports non-positive size {size}").into(),
+                ));
+            }
+        }
+
+        let resp = self
+            .client
+            .download_original(new_id)
+            .await
+            .map_err(|e| PipelineError::Sink(Box::new(e)))?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| PipelineError::Sink(Box::new(e)))?;
+        if bytes.is_empty() {
+            return Err(PipelineError::Sink("new asset download is empty".into()));
+        }
+
+        Ok(())
     }
 
     async fn delete_original(&self, asset: &Asset) -> Result<()> {
@@ -161,5 +249,12 @@ impl Sink for ImmichSink {
             .await
             .map_err(|e| PipelineError::Sink(Box::new(e)))?;
         Ok(())
+    }
+}
+
+fn transcoded_codec_for(kind: MediaKind) -> MediaCodec {
+    match kind {
+        MediaKind::Image => MediaCodec::Jxl,
+        MediaKind::Video => MediaCodec::Av1,
     }
 }

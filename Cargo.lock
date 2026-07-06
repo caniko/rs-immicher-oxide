@@ -2071,6 +2071,7 @@ name = "rs-immicher-oxide"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "rs-immicher-oxide-backend-immich",
  "rs-immicher-oxide-codec-av1",
@@ -2078,6 +2079,7 @@ dependencies = [
  "rs-immicher-oxide-core",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

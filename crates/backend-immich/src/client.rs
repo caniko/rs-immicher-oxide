@@ -42,11 +42,12 @@ pub struct AssetResponseDto {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExifResponseDto {
     pub file_size_in_byte: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum AssetType {
     Image,
@@ -89,7 +90,7 @@ pub struct AssetMediaResponseDto {
     pub status: AssetMediaStatus,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetMediaStatus {
     Created,

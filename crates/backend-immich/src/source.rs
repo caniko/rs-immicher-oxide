@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
+use std::collections::HashSet;
 use std::io::Read;
 
 use rs_immicher_oxide_core::codec as codec_helpers;
@@ -19,6 +20,12 @@ pub struct ImmichSource {
     asset_type_filter: Option<AssetType>,
     /// Optional filter: only assets taken after this ISO timestamp.
     taken_after: Option<String>,
+    /// Optional filter: only assets created after this ISO timestamp.
+    created_after: Option<String>,
+    /// Optional explicit asset-id allowlist.
+    asset_ids: Option<HashSet<String>>,
+    /// Optional maximum number of assets yielded after all filters.
+    limit: Option<usize>,
     /// Target codec — assets already in this format are skipped.
     target_codec: MediaCodec,
 }
@@ -31,6 +38,9 @@ impl ImmichSource {
             client,
             asset_type_filter: None,
             taken_after: None,
+            created_after: None,
+            asset_ids: None,
+            limit: None,
             target_codec,
         }
     }
@@ -50,6 +60,24 @@ impl ImmichSource {
     /// Only process assets taken after this ISO 8601 timestamp.
     pub fn with_taken_after(mut self, timestamp: &str) -> Self {
         self.taken_after = Some(timestamp.to_string());
+        self
+    }
+
+    /// Only process assets created after this ISO 8601 timestamp.
+    pub fn with_created_after(mut self, timestamp: &str) -> Self {
+        self.created_after = Some(timestamp.to_string());
+        self
+    }
+
+    /// Only process the given asset IDs.
+    pub fn with_asset_ids(mut self, asset_ids: &[String]) -> Self {
+        self.asset_ids = Some(asset_ids.iter().cloned().collect());
+        self
+    }
+
+    /// Stop discovery after yielding `limit` matching assets.
+    pub fn with_limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
         self
     }
 
@@ -110,6 +138,7 @@ impl Source for ImmichSource {
             pending: Vec::new().into_iter(),
             done: false,
             seen: 0,
+            yielded: 0,
             total: None,
         };
 
@@ -129,7 +158,7 @@ impl Source for ImmichSource {
                     asset_type: self.asset_type_filter.clone(),
                     taken_after: self.taken_after.clone(),
                     taken_before: None,
-                    created_after: None,
+                    created_after: self.created_after.clone(),
                     with_deleted: Some(false),
                 };
 
@@ -143,7 +172,7 @@ impl Source for ImmichSource {
 
                 state.seen += result.assets.items.len();
                 state.total = result.assets.total;
-                state.pending = result
+                let mut matched = result
                     .assets
                     .items
                     .into_iter()
@@ -151,21 +180,38 @@ impl Source for ImmichSource {
                     .filter(|a| {
                         a.codec != self.target_codec && self.target_codec != MediaCodec::Unknown
                     })
-                    .collect::<Vec<_>>()
-                    .into_iter();
+                    .filter(|a| {
+                        self.asset_ids
+                            .as_ref()
+                            .is_none_or(|asset_ids| asset_ids.contains(&a.id))
+                    })
+                    .collect::<Vec<_>>();
 
-                match result.assets.next_page {
-                    Some(ref token) if !token.is_empty() => {
-                        state.page = token.parse().unwrap_or(state.page + 1);
+                if let Some(limit) = self.limit {
+                    let remaining = limit.saturating_sub(state.yielded);
+                    matched.truncate(remaining);
+                    state.yielded += matched.len();
+                    if state.yielded >= limit {
+                        state.done = true;
                     }
-                    _ => state.done = true,
                 }
 
-                if state
-                    .total
-                    .is_some_and(|total| state.seen >= total as usize)
-                {
-                    state.done = true;
+                state.pending = matched.into_iter();
+
+                if !state.done {
+                    match result.assets.next_page {
+                        Some(ref token) if !token.is_empty() => {
+                            state.page = token.parse().unwrap_or(state.page + 1);
+                        }
+                        _ => state.done = true,
+                    }
+
+                    if state
+                        .total
+                        .is_some_and(|total| state.seen >= total as usize)
+                    {
+                        state.done = true;
+                    }
                 }
             }
         })
@@ -194,5 +240,6 @@ struct DiscoveryState {
     pending: std::vec::IntoIter<Asset>,
     done: bool,
     seen: usize,
+    yielded: usize,
     total: Option<i32>,
 }

@@ -6,7 +6,7 @@ use crate::error::Result;
 use crate::sink::Sink;
 use crate::source::Source;
 use crate::transcoder::Transcoder;
-use crate::types::{Asset, AssetOutcome};
+use crate::types::{Asset, AssetOutcome, WriteMode};
 
 /// State persistence for resumable pipeline runs.
 #[async_trait]
@@ -30,7 +30,7 @@ pub struct Pipeline {
     transcoder: Arc<dyn Transcoder>,
     sink: Arc<dyn Sink>,
     state: Option<Arc<dyn StateStore>>,
-    dry_run: bool,
+    write_mode: WriteMode,
     concurrency: usize,
 }
 
@@ -46,7 +46,7 @@ impl Pipeline {
             transcoder: transcoder.into(),
             sink: sink.into(),
             state: None,
-            dry_run: false,
+            write_mode: WriteMode::DryRun,
             concurrency: 1,
         }
     }
@@ -59,7 +59,17 @@ impl Pipeline {
 
     /// Enable dry-run mode (discover + log only, no transcode or upload).
     pub fn with_dry_run(mut self, dry_run: bool) -> Self {
-        self.dry_run = dry_run;
+        self.write_mode = if dry_run {
+            WriteMode::DryRun
+        } else {
+            WriteMode::TrashOriginal
+        };
+        self
+    }
+
+    /// Set the write mode for this pipeline.
+    pub fn with_write_mode(mut self, write_mode: WriteMode) -> Self {
+        self.write_mode = write_mode;
         self
     }
 
@@ -80,7 +90,7 @@ impl Pipeline {
         let transcoder = Arc::clone(&self.transcoder);
         let sink = Arc::clone(&self.sink);
         let state = self.state.clone();
-        let dry_run = self.dry_run;
+        let write_mode = self.write_mode;
 
         let mut outcomes = stream
             .map(|asset_result| {
@@ -91,7 +101,7 @@ impl Pipeline {
                 async move {
                     let asset = asset_result?;
                     Ok::<AssetOutcome, crate::error::PipelineError>(
-                        process_asset(source, transcoder, sink, state, dry_run, asset).await,
+                        process_asset(source, transcoder, sink, state, write_mode, asset).await,
                     )
                 }
             })
@@ -136,7 +146,7 @@ async fn process_asset(
     transcoder: Arc<dyn Transcoder>,
     sink: Arc<dyn Sink>,
     state: Option<Arc<dyn StateStore>>,
-    dry_run: bool,
+    write_mode: WriteMode,
     asset: Asset,
 ) -> AssetOutcome {
     if let Some(ref state) = state {
@@ -157,17 +167,19 @@ async fn process_asset(
                 transcoder.label()
             ),
         }
-    } else if dry_run {
+    } else if write_mode.is_dry_run() {
         AssetOutcome::Skipped {
             asset_id: asset.id.clone(),
             reason: "dry run".into(),
         }
     } else {
-        process_opened_asset(&*source, &*transcoder, &*sink, &asset).await
+        process_opened_asset(&*source, &*transcoder, &*sink, write_mode, &asset).await
     };
 
-    if let Some(ref state) = state {
-        let _ = state.record(&asset.id, &outcome).await;
+    if matches!(outcome, AssetOutcome::Success { .. }) {
+        if let Some(ref state) = state {
+            let _ = state.record(&asset.id, &outcome).await;
+        }
     }
 
     outcome
@@ -177,6 +189,7 @@ async fn process_opened_asset(
     source: &dyn Source,
     transcoder: &dyn Transcoder,
     sink: &dyn Sink,
+    write_mode: WriteMode,
     asset: &Asset,
 ) -> AssetOutcome {
     let input = match source.open_original(asset).await {
@@ -199,7 +212,7 @@ async fn process_opened_asset(
         }
     };
 
-    sink.process(asset, &mut transcoded)
+    sink.process(asset, &mut transcoded, write_mode)
         .await
         .unwrap_or_else(|e| AssetOutcome::Failed {
             asset_id: asset.id.clone(),
@@ -356,6 +369,7 @@ mod tests {
     struct MockSink {
         store_fail: bool,
         outcomes: std::sync::Mutex<Vec<AssetOutcome>>,
+        delete_count: std::sync::Arc<std::sync::Mutex<u64>>,
     }
 
     impl MockSink {
@@ -363,7 +377,12 @@ mod tests {
             Self {
                 store_fail: false,
                 outcomes: std::sync::Mutex::new(Vec::new()),
+                delete_count: std::sync::Arc::new(std::sync::Mutex::new(0)),
             }
+        }
+
+        fn delete_count(&self) -> std::sync::Arc<std::sync::Mutex<u64>> {
+            std::sync::Arc::clone(&self.delete_count)
         }
 
         #[allow(dead_code)]
@@ -394,11 +413,18 @@ mod tests {
             Ok(())
         }
 
-        async fn verify(&self, _new_id: &str) -> Result<bool> {
-            Ok(true)
+        async fn verify(
+            &self,
+            _original: &Asset,
+            _output_codec: MediaCodec,
+            _byte_count: u64,
+            _new_id: &str,
+        ) -> Result<()> {
+            Ok(())
         }
 
         async fn delete_original(&self, _asset: &Asset) -> Result<()> {
+            *self.delete_count.lock().unwrap() += 1;
             Ok(())
         }
     }
@@ -512,7 +538,8 @@ mod tests {
         let source = MockSource::new(vec![asset]);
         let transcoder = MockTranscoder::new(&[MediaCodec::Png], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_write_mode(WriteMode::UploadOnly);
 
         let outcomes = std::sync::Mutex::new(Vec::new());
         let summary = pipeline
@@ -548,11 +575,58 @@ mod tests {
         let transcoder =
             MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_write_mode(WriteMode::UploadOnly);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.succeeded, 1);
         assert_eq!(summary.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn pipeline_defaults_to_dry_run() {
+        let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
+        let source = MockSource::new(vec![asset]);
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
+        let sink = MockSink::new();
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
+
+        let summary = pipeline.run(|_| {}).await.unwrap();
+        assert_eq!(summary.skipped, 1);
+        assert_eq!(summary.succeeded, 0);
+    }
+
+    #[tokio::test]
+    async fn upload_only_never_deletes_original() {
+        let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
+        let source = MockSource::new(vec![asset]);
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
+        let sink = MockSink::new();
+        let delete_count = sink.delete_count();
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_write_mode(WriteMode::UploadOnly);
+
+        let summary = pipeline.run(|_| {}).await.unwrap();
+        assert_eq!(summary.succeeded, 1);
+        assert_eq!(*delete_count.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn trash_original_deletes_once_after_verification() {
+        let asset = make_asset("a1", MediaCodec::Jpeg, MediaKind::Image);
+        let source = MockSource::new(vec![asset]);
+        let transcoder =
+            MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
+        let sink = MockSink::new();
+        let delete_count = sink.delete_count();
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_write_mode(WriteMode::TrashOriginal);
+
+        let summary = pipeline.run(|_| {}).await.unwrap();
+        assert_eq!(summary.succeeded, 1);
+        assert_eq!(*delete_count.lock().unwrap(), 1);
     }
 
     #[tokio::test]
@@ -563,7 +637,8 @@ mod tests {
             MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image)
                 .with_failure();
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_write_mode(WriteMode::UploadOnly);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.failed, 1);
@@ -576,7 +651,8 @@ mod tests {
         let transcoder =
             MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_write_mode(WriteMode::UploadOnly);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.failed, 1);
@@ -607,7 +683,8 @@ mod tests {
             .unwrap();
 
         let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
-            .with_state(Box::new(state));
+            .with_state(Box::new(state))
+            .with_write_mode(WriteMode::UploadOnly);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         // a1 skipped (already done), a2 succeeds
@@ -626,7 +703,8 @@ mod tests {
         let transcoder =
             MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
-        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink));
+        let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
+            .with_write_mode(WriteMode::UploadOnly);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.succeeded, 3);
@@ -645,7 +723,8 @@ mod tests {
             MockTranscoder::new(&[MediaCodec::Jpeg], MediaCodec::Jxl, MediaKind::Image);
         let sink = MockSink::new();
         let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
-            .with_concurrency(2);
+            .with_concurrency(2)
+            .with_write_mode(WriteMode::UploadOnly);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.succeeded, 2);
@@ -665,7 +744,8 @@ mod tests {
                 .with_delayed_completion();
         let sink = MockSink::new();
         let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
-            .with_concurrency(2);
+            .with_concurrency(2)
+            .with_write_mode(WriteMode::UploadOnly);
 
         let outcomes = std::sync::Mutex::new(Vec::new());
         let summary = pipeline
@@ -700,7 +780,8 @@ mod tests {
         let state = RecordingState::new(std::sync::Arc::clone(&records));
         let mut pipeline = Pipeline::new(Box::new(source), Box::new(transcoder), Box::new(sink))
             .with_state(Box::new(state))
-            .with_concurrency(2);
+            .with_concurrency(2)
+            .with_write_mode(WriteMode::UploadOnly);
 
         let summary = pipeline.run(|_| {}).await.unwrap();
         assert_eq!(summary.succeeded, 3);

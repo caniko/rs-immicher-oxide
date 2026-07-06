@@ -1,5 +1,24 @@
 use serde::{Deserialize, Serialize};
 
+/// Runtime write behavior for a pipeline run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WriteMode {
+    /// Discover assets only; do not open originals, transcode, upload, or delete.
+    DryRun,
+    /// Upload replacements and verify them, but keep originals untouched.
+    UploadOnly,
+    /// Upload replacements, verify them, then move originals to Immich trash.
+    TrashOriginal,
+}
+
+impl WriteMode {
+    /// Whether this mode is discovery-only.
+    pub fn is_dry_run(self) -> bool {
+        matches!(self, Self::DryRun)
+    }
+}
+
 /// The kind of media asset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MediaKind {
@@ -132,12 +151,18 @@ pub enum AssetOutcome {
     Success {
         asset_id: String,
         new_id: String,
+        original_codec: MediaCodec,
+        output_codec: MediaCodec,
+        original_checksum: Option<String>,
         stats: TranscodeStats,
     },
-    /// Partially succeeded (original deleted, but some metadata copy failed).
+    /// Partially succeeded after upload, but a later lifecycle step failed.
     PartialSuccess {
         asset_id: String,
         new_id: String,
+        original_codec: MediaCodec,
+        output_codec: MediaCodec,
+        original_checksum: Option<String>,
         stats: TranscodeStats,
         warning: String,
     },

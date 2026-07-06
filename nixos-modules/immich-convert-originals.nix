@@ -2,6 +2,28 @@
 let
   cfg = config.services.immich-convert-originals;
   inherit (lib) mkIf mkOption mkEnableOption types literalExpression;
+  stateDir = "/var/lib/rs-immicher-oxide";
+  optionalArg = name: value: lib.optionals (value != null) [ name value ];
+  repeatedArgs = name: values: lib.concatMap (value: [ name value ]) values;
+  execArgs =
+    [
+      "${cfg.package}/bin/rs-immicher-oxide"
+      "watch"
+      "--immich-url"
+      cfg.immichUrl
+      "--interval"
+      cfg.pollInterval
+      "--write-mode"
+      cfg.writeMode
+      "--state-path"
+      cfg.statePath
+      "--manifest-path"
+      cfg.manifestPath
+    ]
+    ++ optionalArg "--limit" (if cfg.limit == null then null else toString cfg.limit)
+    ++ optionalArg "--created-after" cfg.createdAfter
+    ++ optionalArg "--taken-after" cfg.takenAfter
+    ++ repeatedArgs "--asset-id" cfg.assetIds;
 in
 {
   options.services.immich-convert-originals = {
@@ -22,7 +44,8 @@ in
     };
 
     apiKeyFile = mkOption {
-      type = types.path;
+      type = types.nullOr types.path;
+      default = null;
       description = ''
         Path to a file containing the Immich API key.
         Use agenix: `config.age.secrets.immich-convert-api-key.path`
@@ -72,10 +95,53 @@ in
       description = "Poll interval for new asset discovery (watch mode).";
     };
 
-    dryRun = mkOption {
-      type = types.bool;
-      default = true;
-      description = "If true, discover and log assets without transcode/upload.";
+    writeMode = mkOption {
+      type = types.enum [ "dry-run" "upload-only" "trash-original" ];
+      default = "dry-run";
+      description = ''
+        Runtime write behavior. Keep the default dry-run for production
+        discovery. Use upload-only for the initial canary so originals remain
+        untouched. trash-original moves originals to Immich trash after
+        verification; force-delete is not exposed by this module.
+      '';
+    };
+
+    assetIds = mkOption {
+      type = types.listOf types.str;
+      default = [];
+      description = "Explicit Immich asset IDs to process.";
+    };
+
+    limit = mkOption {
+      type = types.nullOr types.ints.positive;
+      default = null;
+      description = "Maximum matching assets to process per media pipeline.";
+    };
+
+    createdAfter = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "2026-07-01T00:00:00.000Z";
+      description = "Only process assets created after this ISO 8601 timestamp.";
+    };
+
+    takenAfter = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "2026-07-01T00:00:00.000Z";
+      description = "Only process assets taken after this ISO 8601 timestamp.";
+    };
+
+    statePath = mkOption {
+      type = types.str;
+      default = "${stateDir}/state.jsonl";
+      description = "Append-only JSONL state file for verified successes.";
+    };
+
+    manifestPath = mkOption {
+      type = types.str;
+      default = "${stateDir}/manifest.jsonl";
+      description = "Append-only JSONL manifest for all run outcomes.";
     };
 
     renderDevice = mkOption {
@@ -105,6 +171,12 @@ in
 
     environment.systemPackages = [ cfg.package ];
 
+    users.groups.immich-converter = {};
+    users.users.immich-converter = {
+      isSystemUser = true;
+      group = "immich-converter";
+    };
+
     systemd.services.immich-convert-originals = {
       description = "Immich original transcoder — transpile to AV1/JXL";
       after = [ "network-online.target" ];
@@ -112,13 +184,9 @@ in
 
       serviceConfig = {
         Type = "simple";
-        ExecStart = "${cfg.package}/bin/rs-immicher-oxide watch "
-          + "--immich-url ${cfg.immichUrl} "
-          + "--interval ${cfg.pollInterval} "
-          + "--dry-run ${if cfg.dryRun then "true" else "false"}";
+        ExecStart = lib.escapeShellArgs execArgs;
         User = "immich-converter";
         Group = "immich-converter";
-        DynamicUser = true;
         StateDirectory = "rs-immicher-oxide";
         RuntimeDirectory = "rs-immicher-oxide";
         SupplementaryGroups =

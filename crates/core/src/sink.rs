@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::error::Result;
-use crate::types::{Asset, AssetOutcome, TranscodedAsset};
+use crate::types::{Asset, AssetOutcome, MediaCodec, TranscodedAsset, WriteMode};
 
 /// A destination for transcoded assets.
 ///
@@ -20,18 +20,24 @@ pub trait Sink: Send + Sync {
     /// Copy metadata (favorite, album membership, etc.) from the original to the new asset.
     async fn copy_metadata(&self, original: &Asset, new_id: &str) -> Result<()>;
 
-    /// Verify the new asset is accessible and intact.
-    async fn verify(&self, new_id: &str) -> Result<bool>;
+    /// Verify the new asset is accessible and matches the expected output.
+    async fn verify(
+        &self,
+        original: &Asset,
+        output_codec: MediaCodec,
+        byte_count: u64,
+        new_id: &str,
+    ) -> Result<()>;
 
     /// Delete (trash) the original asset after successful transcode.
     async fn delete_original(&self, asset: &Asset) -> Result<()>;
 
-    /// Process a completed asset through the entire sink lifecycle:
-    /// store → copy_metadata → verify → delete_original.
+    /// Process a completed asset through the selected sink lifecycle.
     async fn process(
         &self,
         original: &Asset,
         transcoded: &mut TranscodedAsset,
+        write_mode: WriteMode,
     ) -> Result<AssetOutcome> {
         let new_id = self.store(original, transcoded).await?;
 
@@ -39,32 +45,49 @@ pub trait Sink: Send + Sync {
             return Ok(AssetOutcome::PartialSuccess {
                 asset_id: original.id.clone(),
                 new_id,
+                original_codec: original.codec,
+                output_codec: transcoded.codec,
+                original_checksum: transcoded.original_checksum.clone(),
                 stats: transcoded.stats.clone(),
                 warning: format!("metadata copy failed: {e}"),
             });
         }
 
-        if !self.verify(&new_id).await.unwrap_or(false) {
+        if let Err(e) = self
+            .verify(original, transcoded.codec, transcoded.byte_count, &new_id)
+            .await
+        {
             return Ok(AssetOutcome::PartialSuccess {
                 asset_id: original.id.clone(),
                 new_id,
+                original_codec: original.codec,
+                output_codec: transcoded.codec,
+                original_checksum: transcoded.original_checksum.clone(),
                 stats: transcoded.stats.clone(),
-                warning: "new asset verification failed".into(),
+                warning: format!("new asset verification failed: {e}"),
             });
         }
 
-        if let Err(e) = self.delete_original(original).await {
-            return Ok(AssetOutcome::PartialSuccess {
-                asset_id: original.id.clone(),
-                new_id,
-                stats: transcoded.stats.clone(),
-                warning: format!("original deletion failed: {e}"),
-            });
+        if matches!(write_mode, WriteMode::TrashOriginal) {
+            if let Err(e) = self.delete_original(original).await {
+                return Ok(AssetOutcome::PartialSuccess {
+                    asset_id: original.id.clone(),
+                    new_id,
+                    original_codec: original.codec,
+                    output_codec: transcoded.codec,
+                    original_checksum: transcoded.original_checksum.clone(),
+                    stats: transcoded.stats.clone(),
+                    warning: format!("original deletion failed: {e}"),
+                });
+            }
         }
 
         Ok(AssetOutcome::Success {
             asset_id: original.id.clone(),
             new_id,
+            original_codec: original.codec,
+            output_codec: transcoded.codec,
+            original_checksum: transcoded.original_checksum.clone(),
             stats: transcoded.stats.clone(),
         })
     }

@@ -82,10 +82,11 @@ export IMMICH_URL="http://localhost:2283"
 export IMMICH_API_KEY="..."
 ```
 
-Discover assets without changing Immich:
+Discover assets without changing Immich. This is the default write mode:
 
 ```sh
 rs-immicher-oxide run
+rs-immicher-oxide run --write-mode dry-run
 ```
 
 Process only images or only videos:
@@ -94,6 +95,22 @@ Process only images or only videos:
 rs-immicher-oxide run --image-only
 rs-immicher-oxide run --video-only
 ```
+
+Run a bounded production canary without touching originals:
+
+```sh
+rs-immicher-oxide run \
+  --write-mode upload-only \
+  --asset-id IMAGE_ASSET_ID \
+  --asset-id VIDEO_ASSET_ID \
+  --state-path ./state.jsonl \
+  --manifest-path ./manifest.jsonl
+```
+
+`upload-only` uploads replacements, copies supported metadata, verifies the new
+asset through the Immich API, and leaves originals untouched. `trash-original`
+is the only mode that moves originals to Immich trash after verification. The
+CLI does not expose force-delete.
 
 Tune codecs:
 
@@ -112,6 +129,9 @@ Run the webhook listener:
 ```sh
 rs-immicher-oxide serve --bind 0.0.0.0:8088
 ```
+
+Webhook mode is dry-run only until single-asset webhook processing is
+implemented.
 
 `RUST_LOG` controls tracing output:
 
@@ -152,9 +172,12 @@ Example:
             package = rs-immicher-oxide.packages.x86_64-linux.default;
             immichUrl = "http://localhost:2283";
             apiKeyFile = "/run/secrets/immich-convert-api-key";
-            dryRun = true;
+            writeMode = "dry-run";
             pollInterval = "5min";
-            concurrency = 2;
+            concurrency = 1;
+            assetIds = [];
+            statePath = "/var/lib/rs-immicher-oxide/state.jsonl";
+            manifestPath = "/var/lib/rs-immicher-oxide/manifest.jsonl";
           };
         }
       ];
@@ -169,6 +192,10 @@ the API key in environment-file syntax:
 ```sh
 IMMICH_API_KEY=...
 ```
+
+Before switching a production system from `dry-run` to `upload-only`, create
+and validate a fresh Immich PostgreSQL dump plus a readonly btrfs snapshot of
+the media location. If either artifact is missing, do not run production writes.
 
 ## Repository Maintenance
 
