@@ -67,6 +67,31 @@ struct RuntimeConfig {
     manifest_path: Option<PathBuf>,
 }
 
+fn resolve_api_key(
+    api_key: Option<String>,
+    api_key_file: Option<PathBuf>,
+) -> anyhow::Result<String> {
+    if let Some(api_key) = api_key {
+        let api_key = api_key.trim().to_string();
+        if api_key.is_empty() {
+            anyhow::bail!("Immich API key is empty");
+        }
+        return Ok(api_key);
+    }
+
+    let Some(path) = api_key_file else {
+        anyhow::bail!(
+            "Immich API key is required; set --api-key, IMMICH_API_KEY, or --api-key-file"
+        );
+    };
+
+    let api_key = std::fs::read_to_string(&path)?.trim().to_string();
+    if api_key.is_empty() {
+        anyhow::bail!("Immich API key file {} is empty", path.display());
+    }
+    Ok(api_key)
+}
+
 impl RuntimeConfig {
     fn to_immich_config(&self) -> ImmichConfig {
         ImmichConfig::new(&self.immich_url, &self.api_key).with_concurrency(self.concurrency)
@@ -112,6 +137,7 @@ impl RuntimeConfig {
 #[derive(Subcommand)]
 enum Command {
     /// One-shot conversion: discover existing assets, transcode, upload.
+    #[command(alias = "convert")]
     Run {
         /// Immich server URL.
         #[arg(long, env = "IMMICH_URL")]
@@ -119,7 +145,11 @@ enum Command {
 
         /// Immich API key.
         #[arg(short, long, env = "IMMICH_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
+
+        /// File containing a raw Immich API key.
+        #[arg(long)]
+        api_key_file: Option<PathBuf>,
 
         /// Only process videos.
         #[arg(long)]
@@ -178,7 +208,11 @@ enum Command {
 
         /// Immich API key.
         #[arg(short, long, env = "IMMICH_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
+
+        /// File containing a raw Immich API key.
+        #[arg(long)]
+        api_key_file: Option<PathBuf>,
 
         /// Explicit Immich asset ID to process. Repeat for canary batches.
         #[arg(long = "asset-id")]
@@ -233,7 +267,11 @@ enum Command {
 
         /// Immich API key.
         #[arg(short, long, env = "IMMICH_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
+
+        /// File containing a raw Immich API key.
+        #[arg(long)]
+        api_key_file: Option<PathBuf>,
 
         /// AV1 CRF.
         #[arg(long, default_value_t = 20)]
@@ -263,6 +301,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Run {
             immich_url,
             api_key,
+            api_key_file,
             video_only,
             image_only,
             asset_ids,
@@ -282,7 +321,7 @@ async fn main() -> anyhow::Result<()> {
 
             let cfg = RuntimeConfig {
                 immich_url,
-                api_key,
+                api_key: resolve_api_key(api_key, api_key_file)?,
                 video_crf,
                 image_distance,
                 concurrency,
@@ -324,6 +363,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Watch {
             immich_url,
             api_key,
+            api_key_file,
             asset_ids,
             limit,
             created_after,
@@ -337,7 +377,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let cfg = RuntimeConfig {
                 immich_url,
-                api_key,
+                api_key: resolve_api_key(api_key, api_key_file)?,
                 video_crf,
                 image_distance,
                 concurrency: 1,
@@ -377,6 +417,7 @@ async fn main() -> anyhow::Result<()> {
             bind,
             immich_url,
             api_key,
+            api_key_file,
             video_crf,
             image_distance,
             write_mode,
@@ -390,7 +431,7 @@ async fn main() -> anyhow::Result<()> {
 
             let cfg = Arc::new(RuntimeConfig {
                 immich_url,
-                api_key,
+                api_key: resolve_api_key(api_key, api_key_file)?,
                 video_crf,
                 image_distance,
                 concurrency: 2,
@@ -758,6 +799,85 @@ mod tests {
     fn parse_invalid_returns_error() {
         let result = parse_duration("abc");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_api_key_reads_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api-key");
+        std::fs::write(&path, " file-key\n").unwrap();
+
+        let api_key = resolve_api_key(None, Some(path)).unwrap();
+
+        assert_eq!(api_key, "file-key");
+    }
+
+    #[test]
+    fn resolve_api_key_rejects_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api-key");
+        std::fs::write(&path, "\n").unwrap();
+
+        let err = resolve_api_key(None, Some(path)).unwrap_err().to_string();
+
+        assert!(err.contains("is empty"));
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_explicit_key_over_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api-key");
+        std::fs::write(&path, "file-key").unwrap();
+
+        let api_key = resolve_api_key(Some(" explicit-key ".into()), Some(path)).unwrap();
+
+        assert_eq!(api_key, "explicit-key");
+    }
+
+    #[test]
+    fn cli_run_parses_api_key_file() {
+        let cli = Cli::try_parse_from([
+            "rs-immicher-oxide",
+            "run",
+            "--immich-url",
+            "http://localhost:2283",
+            "--api-key-file",
+            "/run/agenix/immich-api-key",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::Run { api_key_file, .. } => {
+                assert_eq!(
+                    api_key_file.as_deref(),
+                    Some(Path::new("/run/agenix/immich-api-key"))
+                );
+            }
+            _ => panic!("expected Run command"),
+        }
+    }
+
+    #[test]
+    fn cli_convert_alias_parses_api_key_file() {
+        let cli = Cli::try_parse_from([
+            "rs-immicher-oxide",
+            "convert",
+            "--immich-url",
+            "http://localhost:2283",
+            "--api-key-file",
+            "/run/agenix/immich-api-key",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::Run { api_key_file, .. } => {
+                assert_eq!(
+                    api_key_file.as_deref(),
+                    Some(Path::new("/run/agenix/immich-api-key"))
+                );
+            }
+            _ => panic!("expected Run command"),
+        }
     }
 
     #[test]

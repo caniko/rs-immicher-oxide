@@ -11,6 +11,8 @@ let
       "watch"
       "--immich-url"
       cfg.immichUrl
+      "--api-key-file"
+      cfg.apiKeyFile
       "--interval"
       cfg.pollInterval
       "--write-mode"
@@ -47,8 +49,8 @@ in
       type = types.nullOr types.path;
       default = null;
       description = ''
-        Path to a file containing the Immich API key.
-        Use agenix: `config.age.secrets.immich-convert-api-key.path`
+        Path to a file containing a raw Immich API key.
+        Use agenix: `config.age.secrets.immich-api-key.path`
       '';
     };
 
@@ -200,8 +202,6 @@ in
         NoNewPrivileges = true;
         Restart = "on-failure";
         RestartSec = "10s";
-
-        EnvironmentFile = cfg.apiKeyFile;
       } // lib.optionalAttrs (cfg.renderDevice != null) {
         DeviceAllow = "${cfg.renderDevice} rw";
       };
