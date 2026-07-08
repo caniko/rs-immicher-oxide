@@ -6,32 +6,44 @@
     nixpkgs.follows = "rs-harbor/nixpkgs";
     rust-overlay.follows = "rs-harbor/rust-overlay";
     crane.follows = "rs-harbor/crane";
-    flake-utils.follows = "rs-harbor/flake-utils";
+    flake-parts.url = "github:hercules-ci/flake-parts";
   };
 
-  outputs =
-    { self, nixpkgs, rs-harbor, flake-utils, rust-overlay, ... }@inputs:
-    let
-      nixosModule = import ./nixos-modules/immich-convert-originals.nix;
-    in
-    {
-      nixosModules.immich-convert-originals = nixosModule;
-      nixosModules.default = nixosModule;
-    }
-    // flake-utils.lib.eachDefaultSystem (
-      system:
-      let
+  outputs = {
+    self,
+    nixpkgs,
+    rs-harbor,
+    flake-parts,
+    rust-overlay,
+    ...
+  } @ inputs:
+    flake-parts.lib.mkFlake {inherit inputs;} {
+      systems = [
+        "aarch64-darwin"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "x86_64-linux"
+      ];
+
+      flake = let
+        nixosModule = import ./nixos-modules/immich-convert-originals.nix;
+      in {
+        nixosModules.immich-convert-originals = nixosModule;
+        nixosModules.default = nixosModule;
+      };
+
+      perSystem = {system, ...}: let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ (import rust-overlay) ];
+          overlays = [(import rust-overlay)];
         };
 
         toolchain = rs-harbor.lib.mkToolchain {
           inherit pkgs;
           channel = "stable";
-          extensions = [ "rust-src" "rustfmt" "clippy" "llvm-tools-preview" ];
+          extensions = ["rust-src" "rustfmt" "clippy" "llvm-tools-preview"];
           withRustAnalyzer = false;
-          crossTargets = [ "x86_64-unknown-linux-gnu" ];
+          crossTargets = ["x86_64-unknown-linux-gnu"];
         };
         inherit (toolchain) craneLib;
         cross = rs-harbor.lib.mkCross {
@@ -75,8 +87,7 @@
             pname = "rs-immicher-oxide";
           }
         );
-      in
-      {
+      in {
         packages.default = package;
 
         checks = {
@@ -99,6 +110,6 @@
           pkgConfigDeps = buildInputs;
           packages = nativeBuildInputs ++ buildInputs;
         };
-      }
-    );
+      };
+    };
 }
