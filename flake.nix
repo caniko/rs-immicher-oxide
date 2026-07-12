@@ -66,6 +66,9 @@
           pkg-config
           clang
           mold
+          # openssl-sys may invoke Perl while probing/building OpenSSL in the
+          # sandbox, even when pkg-config supplies the library location.
+          perl
         ];
         buildInputs = with pkgs; [
           ffmpeg
@@ -74,12 +77,29 @@
           openssl
         ];
 
-        commonArgs = {
-          inherit src cargoVendorDir;
-          strictDeps = true;
-          inherit nativeBuildInputs buildInputs;
-          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-        };
+        # Keep the derivation's pkg-config environment explicit. The fallback
+        # lets this checkout remain usable with older locked rs-harbor inputs;
+        # newer rs-harbor versions provide the same contract as a shared
+        # helper for downstream consumers.
+        pkgConfigEnv =
+          if rs-harbor.lib ? mkPkgConfigEnv
+          then
+            rs-harbor.lib.mkPkgConfigEnv {
+              inherit pkgs;
+              deps = buildInputs;
+            }
+          else {
+            PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" buildInputs;
+          };
+
+        commonArgs =
+          {
+            inherit src cargoVendorDir;
+            strictDeps = true;
+            inherit nativeBuildInputs buildInputs;
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          }
+          // pkgConfigEnv;
 
         package = craneLib.buildPackage (
           commonArgs

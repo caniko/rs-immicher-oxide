@@ -27,6 +27,7 @@
 
 ### Changed
 
+- Flake packaging updated for the current project dependency layout.
 - Crate sources restructured from flat top-level directories into
   `crates/` subdirectory.
 - Pipeline internals use `Arc<dyn T>` instead of `Box<dyn T>` to support
