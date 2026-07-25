@@ -1,7 +1,9 @@
 # rs-immicher-oxide
 
 <!-- simit:badges:start -->
+
 ![CI](https://img.shields.io/badge/CI-managed-2088ff) [![docs](https://img.shields.io/badge/docs-enabled-6f42c1)](https://docs.rs/rs-immicher-oxide) [![crates.io](https://img.shields.io/badge/crates.io-ready-f46623)](https://crates.io/crates/rs-immicher-oxide)
+
 <!-- simit:badges:end -->
 
 Immich media transcoding pipeline for replacing original assets with modern

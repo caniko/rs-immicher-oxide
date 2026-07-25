@@ -6,12 +6,6 @@ name: Publish Crate
 
 on:
   workflow_dispatch:
-    inputs:
-      force_publish:
-        description: "Bypass release smoke checks and continue publishing."
-        required: false
-        default: false
-        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -47,7 +41,7 @@ jobs:
           fi
 
           # cargo pkgid scopes the version lookup to the crate this workflow publishes.
-          version="$(nix develop -c cargo pkgid -p rs-immicher-oxide | awk -F'[#@]' '{print $NF}')"
+          version="$(nix develop -c cargo pkgid -p rs-immicher-oxide | awk -F'[#@]' 'NF > 1 {print $NF}' | tail -n 1)"
           if [ -z "$version" ]; then
             echo "Could not read package version from cargo pkgid" >&2
             exit 1
@@ -82,7 +76,7 @@ jobs:
         run: nix develop -c cargo test -p rs-immicher-oxide
 
       - name: Build docs
-        run: nix develop -c cargo doc --no-deps --all-features
+        run: nix develop .#docs -c cargo doc --no-deps --all-features
 
       - name: Clippy
         run: nix develop -c cargo clippy -p rs-immicher-oxide --all-targets -- --deny warnings
@@ -114,7 +108,7 @@ jobs:
               exit 1
             fi
           fi
-          if ! status="$(curl --retry 3 -sS -o /dev/null -w '%{http_code}' -A 'simit init-ci publish check' "https://crates.io/api/v1/crates/${crate_name}/${version}")"; then
+          if ! status="$(curl --retry 3 -sS -o /dev/null -w '%{http_code}' -A 'simit init ci publish check' "https://crates.io/api/v1/crates/${crate_name}/${version}")"; then
             status=000
           fi
           case "$status" in

@@ -24,6 +24,9 @@ jobs:
       - name: Add cargo bin to PATH
         run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
+      - name: Format check
+        run: nix develop -c cargo fmt --all -- --check
+
       - name: Check flake
         run: nix flake check
 
@@ -31,10 +34,10 @@ jobs:
         run: nix develop -c cargo test -p rs-immicher-oxide-core
 
       - name: Build docs
-        run: nix develop -c cargo doc -p rs-immicher-oxide-core --no-deps --all-features
+        run: nix develop .#docs -c cargo doc -p rs-immicher-oxide-core --no-deps --all-features
 
       - name: Clippy
         run: nix develop -c cargo clippy -p rs-immicher-oxide-core --all-targets -- --deny warnings
 
       - name: Package crate
-        run: nix develop -c cargo package -p rs-immicher-oxide-core --allow-dirty
+        run: nix develop -c cargo package -p rs-immicher-oxide-core --allow-dirty --list
