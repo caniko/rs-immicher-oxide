@@ -37,9 +37,6 @@ jobs:
       - name: Test
         run: nix develop -c cargo test -p rs-immicher-oxide
 
-      - name: Build docs
-        run: nix develop .#docs -c cargo doc -p rs-immicher-oxide --no-deps --all-features
-
       - name: Clippy
         run: nix develop -c cargo clippy -p rs-immicher-oxide --all-targets -- --deny warnings
 

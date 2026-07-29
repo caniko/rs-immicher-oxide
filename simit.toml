@@ -2,7 +2,7 @@
 runtime = "nix"
 runner = "ubuntu-24.04"
 workspace = true
-with_docs = true
+with_docs = false
 provider = "actions"
 platform = "github"
 publish_crates = true
