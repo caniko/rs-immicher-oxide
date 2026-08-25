@@ -161,7 +161,7 @@ Example:
 
 ```nix
 {
-  inputs.rs-immicher-oxide.url = "git+https://codeberg.org/caniko/rs-immicher-oxide.git";
+  inputs.rs-immicher-oxide.url = "git+https://github.com/caniko/rs-immicher-oxide.git";
 
   outputs = { self, nixpkgs, rs-immicher-oxide, ... }: {
     nixosConfigurations.host = nixpkgs.lib.nixosSystem {
