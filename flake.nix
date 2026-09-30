@@ -124,12 +124,21 @@
           };
         };
 
-        devShells = rs-harbor.lib.mkDevShells {
-          inherit pkgs cross cargoConfig;
-          inherit (toolchain) craneLib;
-          pkgConfigDeps = buildInputs;
-          packages = nativeBuildInputs ++ buildInputs;
-        };
+        devShells =
+          (rs-harbor.lib.mkDevShells {
+            inherit pkgs cross cargoConfig;
+            inherit (toolchain) craneLib;
+            pkgConfigDeps = buildInputs;
+            packages = nativeBuildInputs ++ buildInputs;
+          })
+          // {
+            docs = rs-harbor.lib.mkDocsShell {
+              inherit pkgs cross cargoConfig;
+              inherit (toolchain) craneLib;
+              pkgConfigDeps = buildInputs;
+              packages = [pkgs.mdbook] ++ nativeBuildInputs ++ buildInputs;
+            };
+          };
       };
     };
 }
