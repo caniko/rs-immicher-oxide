@@ -6,3 +6,4 @@ with_docs = true
 provider = "actions"
 platform = "github"
 publish_crates = true
+publish_strategy = "coordinated"
